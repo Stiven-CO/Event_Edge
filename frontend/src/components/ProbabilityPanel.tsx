@@ -77,12 +77,20 @@ export function ProbabilityPanel() {
 
   const data = useMemo(() => {
     if (!family) return [];
-    return family.scenarios.map((s) => ({
-      label:       s.label,
-      probability: s.probability * 100,
-      ci:          `${(s.ci_lower * 100).toFixed(1)}%–${(s.ci_upper * 100).toFixed(1)}%`,
-    }));
-  }, [family]);
+    return family.scenarios.map((s, i) => {
+      // gap_fill tiene 2 bins (No/Sí): el backend genera "< +50%" y "> +50%"
+      // porque el threshold es 0.5 sobre datos binarios 0/1 — se mapean aquí.
+      let label = s.label;
+      if (selected === "gap_fill" && family.scenarios.length === 2) {
+        label = i === 0 ? "No" : "Sí";
+      }
+      return {
+        label,
+        probability: s.probability * 100,
+        ci:          `${(s.ci_lower * 100).toFixed(1)}%–${(s.ci_upper * 100).toFixed(1)}%`,
+      };
+    });
+  }, [family, selected]);
 
   return (
     <section className="card flex flex-col p-4">

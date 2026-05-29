@@ -141,7 +141,7 @@ export interface DetectEventsRequest {
   source?: string;
   asset_class?: string;
   event_type: EventType;
-  gap_threshold_pct?: number;
+  gap_threshold_pct: number;
   date_range_start?: string;
   date_range_end?: string;
 }
@@ -151,7 +151,7 @@ export interface InformativeRequest {
   source?: string;
   asset_class?: string;
   event_type: EventType;
-  gap_threshold_pct?: number;
+  gap_threshold_pct: number;
   periods?: number[];
 }
 
@@ -164,5 +164,47 @@ export interface AnalysisRequest {
   n_periods: number;
   model: ModelType;
   bins: number[];
+  conditioning: ConditioningParams;
+  date_range_start?: string;
+  date_range_end?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Price Action Plot — Phase 13
+// ---------------------------------------------------------------------------
+
+export interface PriceActionPoint {
+  x: number;
+  y: number;
+}
+
+export interface PriceActionSeries {
+  points: PriceActionPoint[];
+  band_upper: PriceActionPoint[] | null;
+  band_lower: PriceActionPoint[] | null;
+}
+
+export interface PriceActionResult {
+  anchor_mode: "intraday_30min" | "daily";
+  n_periods: number;
+  x_labels: string[];
+  series_all:  PriceActionSeries;
+  series_win:  PriceActionSeries;
+  series_loss: PriceActionSeries;
+  n_events_all:     number;
+  n_events_win:     number;
+  n_events_loss:    number;
+  n_events_omitted: number;
+  warning: "insufficient_events" | "some_events_omitted" | null;
+}
+
+export interface PriceActionRequest {
+  symbol: string;
+  source?: string;
+  asset_class?: string;
+  event_type: EventType;
+  gap_threshold_pct: number;
+  n_periods: number;
+  include_bands: boolean;
   conditioning: ConditioningParams;
 }

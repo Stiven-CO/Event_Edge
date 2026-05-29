@@ -4,13 +4,18 @@ import { useEffect, useState } from "react";
 import { BrokerStatusBadge } from "@/components/BrokerStatusBadge";
 import { EarningsTable } from "@/components/EarningsTable";
 import { MetricsInfoPanel } from "@/components/MetricsInfoPanel";
+import { PriceActionPanel } from "@/components/PriceActionPanel";
 import { ProbabilityPanel } from "@/components/ProbabilityPanel";
 import { SidebarMenu } from "@/components/SidebarMenu";
+import { usePriceAction } from "@/hooks/usePriceAction";
 import { useEventEdgeStore } from "@/store/eventEdgeStore";
 
 export function EventStudyPage() {
   const fetchBrokerStatus = useEventEdgeStore((s) => s.fetchBrokerStatus);
+  const probabilisticResult = useEventEdgeStore((s) => s.probabilisticResult);
+  const priceActionResult = useEventEdgeStore((s) => s.priceActionResult);
   const error = useEventEdgeStore((s) => s.error);
+  const { run: runPriceAction, isLoadingPriceAction } = usePriceAction();
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
@@ -81,6 +86,21 @@ export function EventStudyPage() {
         {/* Probabilidades: sección dominante, más ancha que el centro */}
         <section className="w-[55%] max-w-4xl shrink-0 border-l border-surface-border overflow-y-auto p-4">
           <ProbabilityPanel />
+
+          {/* Botón Price Action — visible solo cuando hay resultado probabilístico */}
+          {probabilisticResult && (
+            <button
+              type="button"
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-surface-border bg-surface-overlay/40 py-2 text-sm text-ink-secondary transition hover:border-accent/40 hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={isLoadingPriceAction}
+              onClick={() => void runPriceAction()}
+            >
+              {isLoadingPriceAction ? "Cargando Price Action…" : "📈 Ver Price Action"}
+            </button>
+          )}
+
+          {/* Panel Price Action */}
+          {priceActionResult && <PriceActionPanel />}
         </section>
 
       </div>

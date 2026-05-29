@@ -177,12 +177,23 @@ def _compute_gap_fill_column(
     n_periods: int,
 ) -> pd.Series:
     """
-    Para cada evento con gap_pct != 0:
-        gap_fill = True si el precio toca el nivel prev_close dentro de las n_periods
-                   sesiones siguientes (usando el rango high-low de cada sesión)
-        gap_fill = NaN si gap_pct == 0 o sin n sesiones disponibles
+    Para cada evento con gap_pct != 0, determina si el precio llenó el gap.
 
-    Retorna Serie de bool/NaN indexada como events_df.
+    Definición de gap fill:
+        El gap queda abierto entre prev_close (close de P-1) y el open de P0.
+        Se considera llenado cuando el precio alcanza el nivel de prev_close,
+        ya sea intraday (via low/high) o al cierre.
+
+    Condición de llenado por signo de gap:
+        Gap UP   (gap_pct > 0): low <= prev_close  ó  close <= prev_close
+        Gap DOWN (gap_pct < 0): high >= prev_close ó  close >= prev_close
+
+    Ventana evaluada:
+        n_periods == 0 → sólo P0 (¿cerró el gap el mismo día?)
+        n_periods >  0 → P0..Pn inclusive (cualquier sesión del horizonte)
+
+    gap_fill = NaN si gap_pct == 0 o sin sesiones disponibles.
+    Retorna Serie de float (0.0 / 1.0 / NaN) indexada como events_df.
     """
     result = pd.Series(np.nan, index=events_df.index, dtype=float)
 
@@ -215,15 +226,29 @@ def _compute_gap_fill_column(
         if prev_close == 0.0:
             continue
 
-        window = df.iloc[pos + 1 : end_pos + 1]
+        # n_periods=0 → verificar si el gap cierra dentro de la misma sesión (P0)
+        # n_periods>0 → verificar sesiones P1..Pn (post-evento)
+        if n_periods == 0:
+            window = df.iloc[pos : pos + 1]
+        else:
+            window = df.iloc[pos + 1 : end_pos + 1]
+
         if window.empty:
             continue
 
         gap_is_up = float(gap_pct) > 0.0
         if gap_is_up:
-            filled = bool((window["low"] <= prev_close).any())
+            # Gap UP: llenado si el precio baja hasta prev_close (via low o close)
+            filled = bool(
+                (window["low"] <= prev_close).any()
+                or (window["close"] <= prev_close).any()
+            )
         else:
-            filled = bool((window["high"] >= prev_close).any())
+            # Gap DOWN: llenado si el precio sube hasta prev_close (via high o close)
+            filled = bool(
+                (window["high"] >= prev_close).any()
+                or (window["close"] >= prev_close).any()
+            )
 
         result.at[i] = 1.0 if filled else 0.0
 

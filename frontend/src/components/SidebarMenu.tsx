@@ -135,6 +135,7 @@ export function SidebarMenu() {
   const symbol       = useEventEdgeStore((s) => s.symbol);
   const companyName  = useEventEdgeStore((s) => s.companyName);
   const eventType    = useEventEdgeStore((s) => s.eventType);
+  const gapThreshold = useEventEdgeStore((s) => s.gapThreshold);
   const model        = useEventEdgeStore((s) => s.model);
   const nPeriods     = useEventEdgeStore((s) => s.nPeriods);
   const bins         = useEventEdgeStore((s) => s.bins);
@@ -147,6 +148,7 @@ export function SidebarMenu() {
 
   const setSymbol       = useEventEdgeStore((s) => s.setSymbol);
   const setEventType    = useEventEdgeStore((s) => s.setEventType);
+  const setGapThreshold = useEventEdgeStore((s) => s.setGapThreshold);
   const clearResults    = useEventEdgeStore((s) => s.clearResults);
   const setModel        = useEventEdgeStore((s) => s.setModel);
   const setNPeriods     = useEventEdgeStore((s) => s.setNPeriods);
@@ -239,6 +241,28 @@ export function SidebarMenu() {
               <option value="gap">Gap</option>
             </select>
           </div>
+
+          {eventType === "gap" && (
+            <div>
+              <label className="label">Umbral de detección (%)</label>
+              <input
+                type="number"
+                className="input mt-1"
+                min={0.1}
+                max={20}
+                step={0.1}
+                value={Number.isFinite(gapThreshold) ? gapThreshold : 1}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    setGapThreshold(1);
+                    return;
+                  }
+                  setGapThreshold(Number(raw));
+                }}
+              />
+            </div>
+          )}
 
           {/* Rango de fechas */}
           <div className="grid grid-cols-2 gap-2">

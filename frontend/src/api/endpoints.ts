@@ -8,6 +8,8 @@ import type {
   EventRecord,
   InformativeMetrics,
   InformativeRequest,
+  PriceActionRequest,
+  PriceActionResult,
   ProbabilisticResult,
 } from "@/api/types";
 
@@ -29,6 +31,11 @@ export const endpoints = {
     }),
   getProbabilisticMetrics: (body: AnalysisRequest) =>
     api.request<ProbabilisticResult>("/analysis/probabilistic", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getPriceAction: (body: PriceActionRequest) =>
+    api.request<PriceActionResult>("/analysis/price-action", {
       method: "POST",
       body: JSON.stringify(body),
     }),

@@ -83,6 +83,13 @@ async def _load_ohlcv(
 	return loader.fetch_ohlcv(req.symbol, period="5y", interval="1d")
 
 
+def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
+	"""Convierte un Timestamp a UTC, localizando primero si es naive."""
+	if ts.tzinfo is None:
+		return ts.tz_localize("UTC")
+	return ts.tz_convert("UTC")
+
+
 def _filter_events_by_date(
 	events: list[EventRecord],
 	start: datetime | None,
@@ -90,19 +97,11 @@ def _filter_events_by_date(
 ) -> list[EventRecord]:
 	out = events
 	if start is not None:
-		start_ts = pd.Timestamp(start)
-		if start_ts.tzinfo is None:
-			start_ts = start_ts.tz_localize("UTC")
-		else:
-			start_ts = start_ts.tz_convert("UTC")
-		out = [e for e in out if pd.Timestamp(e.date).tz_convert("UTC") >= start_ts]
+		start_ts = _to_utc(pd.Timestamp(start))
+		out = [e for e in out if _to_utc(pd.Timestamp(e.date)) >= start_ts]
 
 	if end is not None:
-		end_ts = pd.Timestamp(end)
-		if end_ts.tzinfo is None:
-			end_ts = end_ts.tz_localize("UTC")
-		else:
-			end_ts = end_ts.tz_convert("UTC")
-		out = [e for e in out if pd.Timestamp(e.date).tz_convert("UTC") <= end_ts]
+		end_ts = _to_utc(pd.Timestamp(end))
+		out = [e for e in out if _to_utc(pd.Timestamp(e.date)) <= end_ts]
 
 	return out

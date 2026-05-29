@@ -175,3 +175,103 @@ async def test_informative_analysis(test_client: AsyncClient):
     assert "avg_movement_range" in data
     assert "avg_candle_range" in data
     assert data["data_source"] in ("mdh", "yfinance")
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 — Price Action Plot
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_price_action_daily(test_client: AsyncClient):
+    """n_periods=5 → anchor_mode='daily', x_labels=['P1','P2','P3','P4','P5']."""
+    r = await test_client.post(
+        "/api/v1/analysis/price-action",
+        json={
+            "symbol": "AAPL",
+            "source": "yfinance",
+            "event_type": "earnings",
+            "n_periods": 5,
+            "include_bands": True,
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["anchor_mode"] == "daily"
+    assert data["n_periods"] == 5
+    assert data["x_labels"] == ["P1", "P2", "P3", "P4", "P5"]
+    assert "series_all" in data
+    assert "series_win" in data
+    assert "series_loss" in data
+    assert "n_events_all" in data
+    assert "n_events_omitted" in data
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_price_action_intraday_omits_old_events(test_client: AsyncClient, monkeypatch):
+    """n_periods=0 con datos 30min vacíos → n_events_omitted > 0, warning presente."""
+    from backend.data.earnings_loader import EarningsLoader
+
+    # Parchear fetch_ohlcv para que al llamar con interval="30m" retorne vacío
+    original_fetch = EarningsLoader.fetch_ohlcv
+
+    def patched_fetch(self, symbol, period="5y", interval="1d"):
+        if interval == "30m":
+            import pandas as pd
+            return pd.DataFrame()
+        return original_fetch(self, symbol, period=period, interval=interval)
+
+    monkeypatch.setattr(EarningsLoader, "fetch_ohlcv", patched_fetch)
+
+    r = await test_client.post(
+        "/api/v1/analysis/price-action",
+        json={
+            "symbol": "AAPL",
+            "source": "yfinance",
+            "event_type": "earnings",
+            "n_periods": 0,
+            "include_bands": False,
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["anchor_mode"] == "intraday_30min"
+    assert data["n_events_omitted"] > 0
+    assert data["warning"] in ("insufficient_events", "some_events_omitted")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_price_action_include_bands_false(test_client: AsyncClient):
+    """include_bands=False → band_upper y band_lower deben ser null en series_all."""
+    r = await test_client.post(
+        "/api/v1/analysis/price-action",
+        json={
+            "symbol": "AAPL",
+            "source": "yfinance",
+            "event_type": "earnings",
+            "n_periods": 3,
+            "include_bands": False,
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["series_all"]["band_upper"] is None
+    assert data["series_all"]["band_lower"] is None
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_price_action_invalid_symbol(test_client: AsyncClient):
+    """Symbol inválido → 422."""
+    r = await test_client.post(
+        "/api/v1/analysis/price-action",
+        json={
+            "symbol": "aapl",
+            "source": "yfinance",
+            "event_type": "earnings",
+            "n_periods": 5,
+        },
+    )
+    assert r.status_code == 422

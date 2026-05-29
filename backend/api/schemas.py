@@ -197,6 +197,8 @@ class AnalysisRequest(BaseModel):
     model: ModelType = ModelType.bootstrap
     bins: list[float] = Field(default_factory=lambda: list(_DEFAULT_BINS))
     conditioning: ConditioningParams = Field(default_factory=ConditioningParams)
+    date_range_start: datetime | None = None
+    date_range_end: datetime | None = None
 
     @field_validator("symbol")
     @classmethod
@@ -331,6 +333,63 @@ class ProbabilisticResult(BaseModel):
     model: ModelType
     data_source: str
     families: list[ProbabilisticFamily]
+
+
+# ---------------------------------------------------------------------------
+# Responses — price action plot
+# ---------------------------------------------------------------------------
+
+class PriceActionPoint(BaseModel):
+    """Un punto (x, y) de la serie normalizada."""
+
+    x: int    # índice de barra (intraday) o sesión (1 = P1, 2 = P2 …)
+    y: float  # precio indexado (100 = referencia)
+
+
+class PriceActionSeries(BaseModel):
+    """Serie promedio + bandas ±1σ opcionales para un grupo (all/win/loss)."""
+
+    points: list[PriceActionPoint]
+    band_upper: list[PriceActionPoint] | None  # None si include_bands=False o insuficiente
+    band_lower: list[PriceActionPoint] | None
+
+
+class PriceActionResult(BaseModel):
+    """Respuesta para POST /api/v1/analysis/price-action."""
+
+    anchor_mode: Literal["intraday_30min", "daily"]
+    n_periods: int
+    x_labels: list[str]           # "09:30"…"16:00" para intraday; "P1"…"Pn" para daily
+    series_all:  PriceActionSeries
+    series_win:  PriceActionSeries
+    series_loss: PriceActionSeries
+    n_events_all:     int
+    n_events_win:     int
+    n_events_loss:    int
+    n_events_omitted: int         # eventos sin datos de 30min (solo relevante en intraday)
+    warning: str | None           # "insufficient_events" | "some_events_omitted" | None
+
+
+class PriceActionRequest(BaseModel):
+    """Body para POST /api/v1/analysis/price-action."""
+
+    symbol: str
+    source: str = "yfinance"
+    asset_class: str = "equity"
+    event_type: EventType
+    gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
+    n_periods: int = Field(default=5, ge=0, le=60)
+    include_bands: bool = True
+    conditioning: ConditioningParams = Field(default_factory=ConditioningParams)
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, v: str) -> str:
+        if not re.compile(r"^[A-Z]{1,5}$").match(v):
+            raise ValueError(
+                f"symbol '{v}' inválido: debe ser entre 1 y 5 letras mayúsculas (A-Z)."
+            )
+        return v
 
 
 # ---------------------------------------------------------------------------

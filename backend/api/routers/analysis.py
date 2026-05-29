@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 
+from backend.api.routers.events import _filter_events_by_date
 from backend.api.schemas import (
 	AnalysisRequest,
 	ConditioningParams,
@@ -122,6 +123,7 @@ async def probabilistic_analysis(
 			loader=loader,
 			detector=detector,
 		)
+		events = _filter_events_by_date(events, req.date_range_start, req.date_range_end)
 
 		features_df = feature_builder.build(ohlcv_df, events)
 		conditioned_df = apply_conditioning(features_df, req.conditioning)

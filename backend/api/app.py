@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.routers import analysis, assets, control, events
+from backend.api.routers import analysis, assets, control, events, price_action
 from backend.config import get_settings
 
 
@@ -29,6 +29,7 @@ def create_app() -> FastAPI:
     app.include_router(assets.router)
     app.include_router(events.router)
     app.include_router(analysis.router)
+    app.include_router(price_action.router)
 
     @app.get("/", tags=["root"])
     async def root():
