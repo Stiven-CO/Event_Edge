@@ -67,11 +67,17 @@ async def _load_ohlcv(
 	mdh_client: MdhClient,
 	loader: EarningsLoader,
 ) -> pd.DataFrame:
+	selected_source = (req.source or "yfinance").lower()
+
+	# yfinance se consulta directo.
+	if selected_source == "yfinance":
+		return loader.fetch_ohlcv(req.symbol, period="5y", interval="1d")
+
 	if settings.mdh_enabled:
 		try:
 			return await mdh_client.query_ohlcv(
 				symbol=req.symbol,
-				source=req.source,
+				source=selected_source,
 				asset_class=req.asset_class,
 				timeframe="1d",
 				start=req.date_range_start,
@@ -80,6 +86,7 @@ async def _load_ohlcv(
 		except MdhUnavailableError:
 			pass
 
+	# Fallback a yfinance si MT5/TWS fallan.
 	return loader.fetch_ohlcv(req.symbol, period="5y", interval="1d")
 
 

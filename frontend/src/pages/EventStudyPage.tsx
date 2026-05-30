@@ -8,6 +8,7 @@ import { PriceActionPanel } from "@/components/PriceActionPanel";
 import { ProbabilityPanel } from "@/components/ProbabilityPanel";
 import { SidebarMenu } from "@/components/SidebarMenu";
 import { usePriceAction } from "@/hooks/usePriceAction";
+import type { DataSource } from "@/store/eventEdgeStore";
 import { useEventEdgeStore } from "@/store/eventEdgeStore";
 
 export function EventStudyPage() {
@@ -15,6 +16,9 @@ export function EventStudyPage() {
   const probabilisticResult = useEventEdgeStore((s) => s.probabilisticResult);
   const priceActionResult = useEventEdgeStore((s) => s.priceActionResult);
   const error = useEventEdgeStore((s) => s.error);
+  const infoMessage = useEventEdgeStore((s) => s.infoMessage);
+  const dataSource = useEventEdgeStore((s) => s.dataSource);
+  const setDataSource = useEventEdgeStore((s) => s.setDataSource);
   const { run: runPriceAction, isLoadingPriceAction } = usePriceAction();
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -33,11 +37,16 @@ export function EventStudyPage() {
             <h1 className="font-display text-xl font-bold text-ink-primary">Event Edge</h1>
             <p className="text-xs text-ink-muted">Estudio probabilístico de eventos earnings y gaps</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <BrokerStatusBadge source="mdh" />
-            <BrokerStatusBadge source="yfinance" />
-            <BrokerStatusBadge source="mt5" />
-            <BrokerStatusBadge source="tws" />
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="mr-1 text-xs text-ink-muted">Fuente:</span>
+            {(["yfinance", "mt5", "tws"] as DataSource[]).map((src) => (
+              <BrokerStatusBadge
+                key={src}
+                source={src}
+                selected={dataSource === src}
+                onSelect={() => setDataSource(src)}
+              />
+            ))}
           </div>
         </div>
       </header>
@@ -45,6 +54,12 @@ export function EventStudyPage() {
       {error && (
         <div className="shrink-0 border-b border-status-error/30 bg-status-error/10 px-5 py-2 text-sm text-status-error">
           {error}
+        </div>
+      )}
+
+      {infoMessage && !error && (
+        <div className="shrink-0 border-b border-amber-400/30 bg-amber-50 px-5 py-2 text-sm text-amber-800">
+          {infoMessage}
         </div>
       )}
 

@@ -2,6 +2,12 @@ import { useMemo } from "react";
 
 import { useEventEdgeStore } from "@/store/eventEdgeStore";
 
+const sourceLabel: Record<string, string> = {
+  yfinance: "YFinance",
+  mt5: "MT5",
+  tws: "TWS",
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtPct(v: number | null | undefined, decimals = 2): string {
   if (v == null) return "n/a";
@@ -55,7 +61,7 @@ export function MetricsInfoPanel() {
         <div className="flex items-center justify-between">
           <h3 className="font-display text-lg font-semibold text-ink-primary">Métricas Informativas</h3>
           <span className="rounded-full bg-surface-overlay px-2 py-0.5 text-xs text-ink-muted">
-            {metrics?.data_source === "mdh" ? "MDH" : "yfinance"}
+            {metrics ? sourceLabel[metrics.data_source] ?? metrics.data_source : "n/a"}
           </span>
         </div>
         {companyName && (

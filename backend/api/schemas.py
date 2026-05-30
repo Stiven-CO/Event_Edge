@@ -381,6 +381,8 @@ class PriceActionRequest(BaseModel):
     n_periods: int = Field(default=5, ge=0, le=60)
     include_bands: bool = True
     conditioning: ConditioningParams = Field(default_factory=ConditioningParams)
+    date_range_start: datetime | None = None
+    date_range_end: datetime | None = None
 
     @field_validator("symbol")
     @classmethod

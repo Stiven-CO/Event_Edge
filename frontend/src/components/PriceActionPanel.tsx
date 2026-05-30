@@ -1,9 +1,9 @@
 import { AlertTriangle, TrendingUp } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
-  Area,
   CartesianGrid,
   ComposedChart,
+  Customized,
   Line,
   ReferenceLine,
   ResponsiveContainer,
@@ -48,12 +48,10 @@ function buildChartData(
       y: pt.y,
     };
     if (showBands && series.band_upper && series.band_lower) {
-      const bandUpper = series.band_upper[i]?.y ?? pt.y;
-      const bandLower = series.band_lower[i]?.y ?? pt.y;
-      entry.band_upper = bandUpper;
-      entry.band_lower = bandLower;
-      entry.band_range = Math.max(0, bandUpper - bandLower);
+      entry.band_upper = series.band_upper[i]?.y ?? pt.y;
+      entry.band_lower = series.band_lower[i]?.y ?? pt.y;
     }
+
     return entry;
   });
 }
@@ -87,6 +85,38 @@ export function PriceActionPanel() {
     () => buildChartData(activeSeries, x_labels, showBands && hasBands),
     [activeSeries, x_labels, showBands, hasBands],
   );
+
+  const yDomain = useMemo<[number, number]>(() => {
+    if (chartData.length === 0) return [0, 100];
+
+    const values: number[] = [];
+    for (const row of chartData) {
+      const y = Number(row.y);
+      if (Number.isFinite(y)) values.push(y);
+
+      if (showBands && hasBands) {
+        const lower = Number(row.band_lower);
+        const upper = Number(row.band_upper);
+        if (Number.isFinite(lower)) values.push(lower);
+        if (Number.isFinite(upper)) values.push(upper);
+      }
+    }
+
+    if (values.length === 0) return [0, 100];
+
+    let min = Math.min(...values);
+    let max = Math.max(...values);
+
+    if (min === max) {
+      const delta = Math.max(Math.abs(min) * 0.01, 0.5);
+      return [min - delta, max + delta];
+    }
+
+    const pad = Math.max((max - min) * 0.08, 0.15);
+    min -= pad;
+    max += pad;
+    return [min, max];
+  }, [chartData, showBands, hasBands]);
 
   const nForFilter: Record<FilterKey, number> = {
     all:  n_events_all,
@@ -168,7 +198,7 @@ export function PriceActionPanel() {
               <YAxis
                 tick={{ fontSize: 10, fill: "#9ca3af" }}
                 tickFormatter={(v: number) => v.toFixed(2)}
-                domain={["auto", "auto"]}
+                domain={yDomain}
               />
               <ReferenceLine y={100} stroke="rgba(255,255,255,0.25)" strokeDasharray="4 4" label={{ value: "100", fill: "#9ca3af", fontSize: 9 }} />
               <Tooltip
@@ -177,55 +207,46 @@ export function PriceActionPanel() {
                 formatter={(value: number) => [`${value.toFixed(2)}`, "Precio"]}
               />
 
-              {/* Banda ±1σ: base en límite inferior + rango apilado */}
+              {/* Banda ±1σ — polígono SVG usando escalas del eje para máxima fiabilidad */}
               {showBands && hasBands && (
-                <Area
-                  type="monotone"
-                  dataKey="band_lower"
-                  stackId="sigma"
-                  stroke="none"
-                  fill="transparent"
-                  fillOpacity={0}
-                  legendType="none"
-                  isAnimationActive={false}
-                />
-              )}
-              {showBands && hasBands && (
-                <Area
-                  type="monotone"
-                  dataKey="band_range"
-                  stackId="sigma"
-                  stroke={"none"}
-                  fill={config.fill}
-                  fillOpacity={1}
-                  legendType="none"
-                  isAnimationActive={false}
-                />
-              )}
+                <Customized
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  component={(cProps: any) => {
+                    const xAxisMap = cProps.xAxisMap as Record<string, { scale: (v: string) => number; bandwidth?: () => number }>;
+                    const yAxisMap = cProps.yAxisMap as Record<string, { scale: (v: number) => number }>;
+                    const rows = cProps.data as typeof chartData;
+                    if (!xAxisMap || !yAxisMap || !rows?.length) return null;
 
-              {showBands && hasBands && (
-                <Line
-                  type="monotone"
-                  dataKey="band_upper"
-                  stroke={config.stroke}
-                  strokeOpacity={0.55}
-                  strokeWidth={1}
-                  dot={false}
-                  activeDot={false}
-                  isAnimationActive={false}
-                />
-              )}
+                    const xScale = Object.values(xAxisMap)[0]?.scale;
+                    const yScale = Object.values(yAxisMap)[0]?.scale;
+                    if (!xScale || !yScale) return null;
 
-              {showBands && hasBands && (
-                <Line
-                  type="monotone"
-                  dataKey="band_lower"
-                  stroke={config.stroke}
-                  strokeOpacity={0.55}
-                  strokeWidth={1}
-                  dot={false}
-                  activeDot={false}
-                  isAnimationActive={false}
+                    const bw = (Object.values(xAxisMap)[0]?.bandwidth?.() ?? 0) / 2;
+
+                    type Pt = [number, number];
+                    const upper: Pt[] = [];
+                    const lower: Pt[] = [];
+                    for (const row of rows) {
+                      if (row.band_upper === undefined || row.band_lower === undefined) continue;
+                      const px = xScale(row.x as string) + bw;
+                      upper.push([px, yScale(row.band_upper as number)]);
+                      lower.push([px, yScale(row.band_lower as number)]);
+                    }
+                    if (upper.length < 2) return null;
+
+                    const toPath = (pts: Pt[]) =>
+                      pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+
+                    const fillD = toPath(upper) + " " + toPath([...lower].reverse()) + " Z";
+
+                    return (
+                      <g>
+                        <path d={fillD} fill={config.fill} fillOpacity={1} stroke="none" />
+                        <path d={toPath(upper)} fill="none" stroke={config.stroke} strokeOpacity={0.45} strokeWidth={1} />
+                        <path d={toPath(lower)} fill="none" stroke={config.stroke} strokeOpacity={0.45} strokeWidth={1} />
+                      </g>
+                    );
+                  }}
                 />
               )}
 

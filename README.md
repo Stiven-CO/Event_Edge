@@ -59,10 +59,8 @@ El backend expone la documentación interactiva en `http://localhost:8100/docs`.
 
 | Fuente | Uso | Variable de entorno |
 |--------|-----|---------------------|
-| market_data_hub | OHLCV primaria | `EE_MDH_BASE_URL`, `EE_MDH_ENABLED` |
+| market_data_hub | OHLCV primaria y estado de conectores MT5/TWS | `EE_MDH_BASE_URL`, `EE_MDH_ENABLED`, `EE_MDH_API_KEY` |
 | yfinance | OHLCV fallback + Earnings metadata | — |
-| MT5 | Fuente de datos de broker | `EE_MT5_LOGIN`, `EE_MT5_SERVER` |
-| TWS | Fuente de datos de broker | `EE_TWS_API_KEY` |
 
 Configurar en `.env` (ver `backend/config.py` para todas las variables disponibles).
 
@@ -73,8 +71,9 @@ Configurar en `.env` (ver `backend/config.py` para todas las variables disponibl
 Crear `.env` en la raíz del proyecto:
 
 ```env
-EE_MDH_BASE_URL=http://localhost:8000/api/v1
+EE_MDH_BASE_URL=http://localhost:8080/api/v1
 EE_MDH_ENABLED=true
+EE_MDH_API_KEY=
 EE_DEBUG=false
 ```
 

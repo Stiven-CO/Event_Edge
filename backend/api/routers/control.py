@@ -33,20 +33,28 @@ async def broker_status(
 	mdh_client: MdhClient = Depends(get_mdh_client),
 ) -> list[BrokerStatus]:
 	mdh_mode = "primary" if settings.mdh_enabled else "disabled"
-	mdh_alive = await mdh_client.health_check() if settings.mdh_enabled else False
+	mdh_alive = False
+	connectors: dict[str, bool] = {}
+	if settings.mdh_enabled:
+		mdh_alive = await mdh_client.health_check()
+		if mdh_alive:
+			try:
+				connectors = await mdh_client.connector_status()
+			except Exception:
+				connectors = {}
 
-	mt5_enabled = settings.mt5_login > 0 and settings.mt5_server != ""
-	mt5_mode = "primary" if mt5_enabled else "disabled"
+	mt5_mode = "proxy" if settings.mdh_enabled else "disabled"
+	mt5_alive = bool(connectors.get("mt5", False)) if settings.mdh_enabled else False
 
-	tws_enabled = settings.tws_api_key != ""
-	tws_mode = "primary" if tws_enabled else "disabled"
+	tws_mode = "proxy" if settings.mdh_enabled else "disabled"
+	tws_alive = bool(connectors.get("tws", False)) if settings.mdh_enabled else False
 
 	yfinance_mode = "fallback" if settings.mdh_enabled else "primary"
 	yfinance_alive = EarningsLoader().is_available()
 
 	return [
 		BrokerStatus(source="mdh", alive=mdh_alive, mode=mdh_mode),
-		BrokerStatus(source="mt5", alive=mt5_enabled, mode=mt5_mode),
-		BrokerStatus(source="tws", alive=tws_enabled, mode=tws_mode),
+		BrokerStatus(source="mt5", alive=mt5_alive, mode=mt5_mode),
+		BrokerStatus(source="tws", alive=tws_alive, mode=tws_mode),
 		BrokerStatus(source="yfinance", alive=yfinance_alive, mode=yfinance_mode),
 	]

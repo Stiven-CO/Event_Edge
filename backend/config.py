@@ -1,20 +1,15 @@
 from __future__ import annotations
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ENV_FILE = Path(__file__).parent / ".env"
 
 
 class Settings(BaseSettings):
     # MDH
-    mdh_base_url: str = "http://localhost:8000/api/v1"
+    mdh_base_url: str = "http://localhost:8080/api/v1"
     mdh_api_key: str = ""
     mdh_enabled: bool = True          # False → yfinance fallback
-
-    # MT5
-    mt5_login: int = 0
-    mt5_password: str = ""            # nunca en logs ni en respuestas API
-    mt5_server: str = ""
-
-    # TWS
-    tws_api_key: str = ""             # vacío → 403 en endpoints TWS
 
     # App
     debug: bool = False
@@ -22,7 +17,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="EE_",
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         extra="ignore",
     )
 

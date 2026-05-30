@@ -13,6 +13,8 @@ import type {
   ProbabilisticResult,
 } from "@/api/types";
 
+export type DataSource = "yfinance" | "mt5" | "tws";
+
 interface EventEdgeState {
   symbol: string;
   companyName: string;
@@ -25,6 +27,7 @@ interface EventEdgeState {
   conditioning: ConditioningParams;
   dateStart: string;
   dateEnd: string;
+  dataSource: DataSource;
 
   events: EventRecord[];
   informativeMetrics: InformativeMetrics | null;
@@ -37,6 +40,7 @@ interface EventEdgeState {
   isLoadingBrokerStatus: boolean;
   isLoadingPriceAction: boolean;
   error: string | null;
+  infoMessage: string | null;
 
   setSymbol: (s: string) => void;
   setEventType: (t: EventType) => void;
@@ -50,6 +54,7 @@ interface EventEdgeState {
   clearResults: () => void;
   setDateStart: (d: string) => void;
   setDateEnd: (d: string) => void;
+  setDataSource: (s: DataSource) => void;
 
   fetchBrokerStatus: () => Promise<void>;
   fetchEvents: () => Promise<void>;
@@ -60,6 +65,31 @@ interface EventEdgeState {
 const defaultConditioning: ConditioningParams = {
   gap_direction: "any",
 };
+
+const sourceLabel: Record<DataSource, string> = {
+  yfinance: "YFinance",
+  mt5: "MT5",
+  tws: "TWS",
+};
+
+function fallbackMessage(selectedSource: DataSource, usedSource: string | null | undefined): string | null {
+  if ((selectedSource === "mt5" || selectedSource === "tws") && usedSource === "yfinance") {
+    return `No fue posible usar ${sourceLabel[selectedSource]}. Se usó YFinance como respaldo.`;
+  }
+  return null;
+}
+
+function unavailableMessage(selectedSource: DataSource, statuses: BrokerStatus[]): string | null {
+  if (selectedSource !== "mt5" && selectedSource !== "tws") {
+    return null;
+  }
+
+  const selected = statuses.find((s) => s.source === selectedSource);
+  if (selected && !selected.alive) {
+    return `${sourceLabel[selectedSource]} no está disponible en este momento. Se intentará usar YFinance como respaldo.`;
+  }
+  return null;
+}
 
 export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   symbol: "AAPL",
@@ -73,6 +103,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   conditioning: defaultConditioning,
   dateStart: "",
   dateEnd: "",
+  dataSource: "yfinance",
 
   events: [],
   informativeMetrics: null,
@@ -85,9 +116,10 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   isLoadingBrokerStatus: false,
   isLoadingPriceAction: false,
   error: null,
+  infoMessage: null,
 
-  setSymbol: (symbol) => set({ symbol, error: null }),
-  setEventType: (eventType) => set({ eventType, informativeMetrics: null, probabilisticResult: null, error: null }),
+  setSymbol: (symbol) => set({ symbol, error: null, infoMessage: null }),
+  setEventType: (eventType) => set({ eventType, informativeMetrics: null, probabilisticResult: null, error: null, infoMessage: null }),
   setModel: (model) => set({ model }),
   setNPeriods: (nPeriods) => set({ nPeriods: Math.max(0, Math.min(60, Math.trunc(nPeriods))) }),
   setGapThreshold: (gapThreshold) => set({ gapThreshold: Math.max(0.1, Math.min(20, Number.isFinite(gapThreshold) ? gapThreshold : 1.0)) }),
@@ -98,6 +130,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   clearResults: () => set({ events: [], informativeMetrics: null, probabilisticResult: null, priceActionResult: null, error: null }),
   setDateStart: (dateStart) => set({ dateStart }),
   setDateEnd: (dateEnd) => set({ dateEnd }),
+  setDataSource: (dataSource) => set({ dataSource, infoMessage: null }),
 
   fetchBrokerStatus: async () => {
     set({ isLoadingBrokerStatus: true });
@@ -111,12 +144,13 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
 
   fetchEvents: async () => {
     const { symbol, eventType, dateStart, dateEnd, gapThreshold } = get();
-    set({ isLoadingEvents: true, error: null });
+    set({ isLoadingEvents: true, error: null, infoMessage: null });
     try {
+      const { dataSource, brokerStatuses } = get();
       const [events, assetInfo] = await Promise.allSettled([
         endpoints.detectEvents({
           symbol,
-          source: "yfinance",
+          source: dataSource,
           asset_class: "equity",
           event_type: eventType,
           gap_threshold_pct: gapThreshold,
@@ -128,7 +162,14 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
       const resolvedEvents = events.status === "fulfilled" ? events.value : [];
       const companyName =
         assetInfo.status === "fulfilled" ? (assetInfo.value.short_name || "") : "";
-      set({ events: resolvedEvents, companyName, isLoadingEvents: false, informativeMetrics: null, probabilisticResult: null });
+      set({
+        events: resolvedEvents,
+        companyName,
+        isLoadingEvents: false,
+        informativeMetrics: null,
+        probabilisticResult: null,
+        infoMessage: unavailableMessage(dataSource, brokerStatuses),
+      });
     } catch (error) {
       set({
         isLoadingEvents: false,
@@ -138,13 +179,13 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   },
 
   fetchMetrics: async () => {
-    const { symbol, eventType, model, nPeriods, gapThreshold, bins, conditioning, periods, dateStart, dateEnd } = get();
-    set({ isLoadingMetrics: true, error: null });
+    const { symbol, eventType, model, nPeriods, gapThreshold, bins, conditioning, periods, dateStart, dateEnd, dataSource } = get();
+    set({ isLoadingMetrics: true, error: null, infoMessage: null });
 
     try {
       const informativePromise = endpoints.getInformativeMetrics({
         symbol,
-        source: "yfinance",
+        source: dataSource,
         asset_class: "equity",
         event_type: eventType,
         gap_threshold_pct: gapThreshold,
@@ -153,7 +194,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
 
       const probabilisticBody: AnalysisRequest = {
         symbol,
-        source: "yfinance",
+        source: dataSource,
         asset_class: "equity",
         event_type: eventType,
         model,
@@ -175,6 +216,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         informativeMetrics,
         probabilisticResult,
         isLoadingMetrics: false,
+        infoMessage: fallbackMessage(dataSource, informativeMetrics.data_source),
       });
     } catch (error) {
       set({
@@ -185,20 +227,26 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   },
 
   fetchPriceAction: async () => {
-    const { symbol, eventType, nPeriods, conditioning, gapThreshold } = get();
-    set({ isLoadingPriceAction: true });
+    const { symbol, eventType, nPeriods, conditioning, gapThreshold, dateStart, dateEnd, dataSource, brokerStatuses } = get();
+    set({ isLoadingPriceAction: true, infoMessage: null });
     try {
       const result = await endpoints.getPriceAction({
         symbol,
-        source: "yfinance",
+        source: dataSource,
         asset_class: "equity",
         event_type: eventType,
         gap_threshold_pct: gapThreshold,
         n_periods: nPeriods,
         include_bands: true,
         conditioning,
+        ...(dateStart ? { date_range_start: dateStart } : {}),
+        ...(dateEnd ? { date_range_end: dateEnd } : {}),
       });
-      set({ priceActionResult: result, isLoadingPriceAction: false });
+      set({
+        priceActionResult: result,
+        isLoadingPriceAction: false,
+        infoMessage: unavailableMessage(dataSource, brokerStatuses),
+      });
     } catch (error) {
       set({
         isLoadingPriceAction: false,
