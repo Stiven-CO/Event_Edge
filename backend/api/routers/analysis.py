@@ -48,7 +48,7 @@ async def informative_analysis(
 	detector = EventDetector()
 
 	try:
-		ohlcv_df, source_used = await _load_ohlcv(
+		ohlcv_df, source_used, fallback_detail = await _load_ohlcv(
 			symbol=req.symbol,
 			source=req.source,
 			asset_class=req.asset_class,
@@ -76,6 +76,7 @@ async def informative_analysis(
 			events=events,
 			periods=req.periods,
 			data_source=source_used,
+			data_source_detail=fallback_detail,
 		)
 	except HTTPException:
 		raise
@@ -101,7 +102,7 @@ async def probabilistic_analysis(
 	feature_builder = FeatureBuilder()
 
 	try:
-		ohlcv_df, source_used = await _load_ohlcv(
+		ohlcv_df, source_used, fallback_detail = await _load_ohlcv(
 			symbol=req.symbol,
 			source=req.source,
 			asset_class=req.asset_class,
@@ -138,6 +139,7 @@ async def probabilistic_analysis(
 			bins=req.bins,
 			symbol=req.symbol,
 			data_source=source_used,
+			data_source_detail=fallback_detail,
 		)
 	except HTTPException:
 		raise
@@ -262,14 +264,40 @@ async def _load_ohlcv(
 	settings: Settings,
 	mdh_client: MdhClient,
 	loader: EarningsLoader,
-) -> tuple[pd.DataFrame, str]:
+) -> tuple[pd.DataFrame, str, str | None]:
+	"""Retorna (df, source_used, fallback_detail).
+	fallback_detail contiene el motivo cuando MT5/TWS cayeron a yfinance."""
 	selected_source = (source or "yfinance").lower()
+	live_sources = {"mt5", "tws"}
 
 	# yfinance se consume directo: no necesita pasar por MDH.
 	if selected_source == "yfinance":
-		return loader.fetch_ohlcv(symbol, period="5y", interval="1d"), "yfinance"
+		return loader.fetch_ohlcv(symbol, period="5y", interval="1d"), "yfinance", None
 
 	if settings.mdh_enabled:
+		# Si la fuente live esta marcada como no disponible en MDH, forzamos fallback
+		# para mantener consistencia entre banner UI y data_source en metricas.
+		if selected_source in live_sources:
+			try:
+				statuses = await mdh_client.connector_status()
+				if not statuses.get(selected_source, False):
+					fallback_detail = (
+						f"{selected_source.upper()} no esta disponible en este momento. "
+						f"Se uso YFinance como respaldo."
+					)
+					return (
+						loader.fetch_ohlcv(symbol, period="5y", interval="1d"),
+						"yfinance",
+						fallback_detail,
+					)
+			except MdhUnavailableError as exc:
+				fallback_detail = _extract_friendly_detail(str(exc), selected_source)
+				return (
+					loader.fetch_ohlcv(symbol, period="5y", interval="1d"),
+					"yfinance",
+					fallback_detail,
+				)
+
 		try:
 			df = await mdh_client.query_ohlcv(
 				symbol=symbol,
@@ -277,12 +305,30 @@ async def _load_ohlcv(
 				asset_class=asset_class,
 				timeframe="1d",
 			)
-			return df, selected_source
-		except MdhUnavailableError:
-			pass
+			return df, selected_source, None
+		except MdhUnavailableError as exc:
+			fallback_detail = _extract_friendly_detail(str(exc), selected_source)
+	else:
+		fallback_detail = f"MDH deshabilitado; se usó YFinance como respaldo."
 
 	# Fallback explícito cuando MT5/TWS no están disponibles o MDH falla.
-	return loader.fetch_ohlcv(symbol, period="5y", interval="1d"), "yfinance"
+	return loader.fetch_ohlcv(symbol, period="5y", interval="1d"), "yfinance", fallback_detail
+
+
+def _extract_friendly_detail(raw_error: str | None, source: str) -> str:
+	"""Convierte el mensaje de MdhUnavailableError en texto legible para el usuario."""
+	if not raw_error:
+		return f"{source.upper()} no disponible; se usó YFinance como respaldo."
+	if "credenciales" in raw_error.lower() or "login" in raw_error.lower() or "password" in raw_error.lower():
+		return (
+			f"Credenciales de {source.upper()} no configuradas en MDH "
+			f"(MDH_{source.upper()}_LOGIN / PASSWORD / SERVER). Se usó YFinance."
+		)
+	if "conexión fallida" in raw_error.lower() or "connecterror" in raw_error.lower():
+		return f"MDH no alcanzable. Se usó YFinance como respaldo."
+	if "503" in raw_error or "502" in raw_error:
+		return f"{source.upper()} no disponible en MDH (503). Se usó YFinance."
+	return f"{source.upper()} falló: {raw_error[:120]}. Se usó YFinance."
 
 
 def _detect_events(

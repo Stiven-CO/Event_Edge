@@ -5,7 +5,7 @@ Retorna DataFrame OHLCV con columnas:
     date (DatetimeIndex UTC), open, high, low, close, volume (float)
 
 Errores:
-    MdhUnavailableError — cuando MDH no responde o retorna error 5xx
+    MdhUnavailableError — cuando MDH no responde o retorna error 5xx/4xx
 """
 from __future__ import annotations
 
@@ -16,6 +16,10 @@ import httpx
 import pandas as pd
 
 _OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
+
+# Fuentes que requieren fetch on-demand vía ephemeral pipeline de MDH.
+# Para estas fuentes se usa layer="ephemeral" en lugar de "curated".
+_LIVE_SOURCES: frozenset[str] = frozenset({"mt5", "tws"})
 
 
 class MdhUnavailableError(Exception):
@@ -79,20 +83,29 @@ class MdhClient:
         timeframe: str = "1d",
         start: datetime | None = None,
         end: datetime | None = None,
-        layer: str = "curated",
+        layer: str | None = None,
     ) -> pd.DataFrame:
         """
         Llama POST /api/v1/data/query en MDH.
+
+        layer=None → auto-selección:
+          - 'ephemeral' para MT5/TWS (fetch on-demand desde el broker)
+          - 'curated'   para el resto (datos persistidos en el lake)
+
         Retorna DataFrame con index DatetimeIndex UTC y columnas
         [open, high, low, close, volume].
-        Lanza MdhUnavailableError si el servicio no responde.
+        Lanza MdhUnavailableError si el servicio no responde o retorna error.
         """
+        resolved_layer = layer or (
+            "ephemeral" if source.lower() in _LIVE_SOURCES else "curated"
+        )
+
         payload: dict[str, Any] = {
             "symbol": symbol,
             "source": source,
             "asset_class": asset_class,
             "timeframe": timeframe,
-            "layer": layer,
+            "layer": resolved_layer,
         }
         if start is not None:
             payload["start"] = start.isoformat()
@@ -113,11 +126,13 @@ class MdhClient:
 
         if response.status_code >= 500:
             raise MdhUnavailableError(
-                f"MDH retornó error {response.status_code} para {symbol}"
+                f"MDH retornó error {response.status_code} para {symbol}: {response.text[:300]}"
             )
         if response.status_code >= 400:
+            # Incluimos el detalle del error (ej: "credenciales MT5 no configuradas")
             raise MdhUnavailableError(
-                f"MDH retornó {response.status_code} para {symbol}: {response.text[:200]}"
+                f"MDH retornó {response.status_code} para {symbol} "
+                f"(source={source}, layer={resolved_layer}): {response.text[:300]}"
             )
 
         records: list[dict[str, Any]] = response.json()
@@ -176,11 +191,12 @@ class MdhClient:
 
         if response.status_code >= 500:
             raise MdhUnavailableError(
-                f"MDH retornó error {response.status_code} para {symbol}"
+                f"MDH retornó error {response.status_code} para {symbol}: {response.text[:300]}"
             )
         if response.status_code >= 400:
             raise MdhUnavailableError(
-                f"MDH retornó {response.status_code} para {symbol}: {response.text[:200]}"
+                f"MDH retornó {response.status_code} para {symbol} "
+                f"(source={source}): {response.text[:300]}"
             )
 
         records: list[dict[str, Any]] = response.json()

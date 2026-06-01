@@ -72,9 +72,13 @@ const sourceLabel: Record<DataSource, string> = {
   tws: "TWS",
 };
 
-function fallbackMessage(selectedSource: DataSource, usedSource: string | null | undefined): string | null {
+function fallbackMessage(
+  selectedSource: DataSource,
+  usedSource: string | null | undefined,
+  detail?: string | null,
+): string | null {
   if ((selectedSource === "mt5" || selectedSource === "tws") && usedSource === "yfinance") {
-    return `No fue posible usar ${sourceLabel[selectedSource]}. Se usó YFinance como respaldo.`;
+    return detail ?? `No fue posible usar ${sourceLabel[selectedSource]}. Se usó YFinance como respaldo.`;
   }
   return null;
 }
@@ -216,7 +220,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         informativeMetrics,
         probabilisticResult,
         isLoadingMetrics: false,
-        infoMessage: fallbackMessage(dataSource, informativeMetrics.data_source),
+        infoMessage: fallbackMessage(dataSource, informativeMetrics.data_source, informativeMetrics.data_source_detail),
       });
     } catch (error) {
       set({

@@ -26,6 +26,7 @@ def compute_probabilistic_metrics(
     bins: list[float],
     symbol: str,
     data_source: str,
+    data_source_detail: str | None = None,
 ) -> ProbabilisticResult:
     """
     Calcula ProbabilisticResult con familias de métricas.
@@ -97,6 +98,7 @@ def compute_probabilistic_metrics(
         symbol=symbol,
         model=model_type,
         data_source=data_source,
+        data_source_detail=data_source_detail,
         families=families,
     )
 

@@ -287,7 +287,8 @@ class InformativeMetrics(BaseModel):
     avg_candle_range: dict[int, dict]    # {n_period: {mean: float, std: float}}
     gap_mean: float | None
     gap_std: float | None
-    data_source: str                     # "mdh" | "yfinance"
+    data_source: str                     # "mdh" | "yfinance" | "mt5" | "tws"
+    data_source_detail: str | None = None  # motivo de fallback, ej: "credenciales MT5 no configuradas"
     # ── P0 (día del evento) ──
     event_day_range_mean: float | None = None   # (high_P0 - low_P0) / close_P0
     event_day_range_std: float | None = None
@@ -332,6 +333,7 @@ class ProbabilisticResult(BaseModel):
     symbol: str
     model: ModelType
     data_source: str
+    data_source_detail: str | None = None  # motivo de fallback cuando aplica
     families: list[ProbabilisticFamily]
 
 

@@ -17,6 +17,7 @@ def compute_informative_metrics(
     events: list[EventRecord],
     periods: list[int],
     data_source: str,
+    data_source_detail: str | None = None,
 ) -> InformativeMetrics:
     """
     Calcula métricas informativas sobre todos los eventos.
@@ -43,6 +44,7 @@ def compute_informative_metrics(
             gap_mean=None,
             gap_std=None,
             data_source=data_source,
+            data_source_detail=data_source_detail,
         )
 
     # Símbolo y tipo de evento de la muestra
@@ -156,6 +158,7 @@ def compute_informative_metrics(
         gap_mean=gap_mean,
         gap_std=gap_std,
         data_source=data_source,
+        data_source_detail=data_source_detail,
         event_day_range_mean=_stats(event_day_ranges)["mean"] if event_day_ranges else None,
         event_day_range_std=_stats(event_day_ranges)["std"] if event_day_ranges else None,
         event_day_volume_mean=_stats(event_day_volumes)["mean"] if event_day_volumes else None,

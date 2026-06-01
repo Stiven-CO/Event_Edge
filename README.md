@@ -46,12 +46,17 @@ npm install
 # Backend (puerto 8100)
 .\start_server.ps1
 
-# Frontend (puerto 5173) — en otra terminal
+# Frontend (puerto 3000 en validacion E2E) — en otra terminal
 cd frontend
-npm run dev
+npm run dev -- --host 0.0.0.0 --port 3000
 ```
 
 El backend expone la documentación interactiva en `http://localhost:8100/docs`.
+
+En esta validacion E2E, Event Edge se probo con:
+- Backend: `http://localhost:8100`
+- Frontend: `http://localhost:3000`
+- MDH (dependencia externa): `http://localhost:8080/api/v1`
 
 ---
 
@@ -88,3 +93,11 @@ pytest tests/unit/ -v -m unit
 # Tests de integración (requiere servidor en :8100)
 pytest tests/integration/ -v -m integration
 ```
+
+## Rutas usadas en validacion E2E
+
+- `GET /api/v1/control/health`
+- `GET /api/v1/control/broker-status`
+- `POST /api/v1/analysis/informative`
+- `POST /api/v1/analysis/probabilistic`
+- `POST /api/v1/events/detect`

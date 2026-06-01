@@ -69,6 +69,7 @@ export interface ProbabilisticResult {
   symbol: string;
   model: ModelType;
   data_source: string;
+  data_source_detail?: string | null;
   families: ProbabilisticFamily[];
 }
 
@@ -83,6 +84,7 @@ export interface InformativeMetrics {
   gap_mean: number | null;
   gap_std: number | null;
   data_source: string;
+  data_source_detail?: string | null;
   // P0 (día del evento)
   event_day_range_mean?: number | null;
   event_day_range_std?: number | null;
