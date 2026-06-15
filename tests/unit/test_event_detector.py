@@ -63,6 +63,37 @@ def test_detect_earnings_out_of_range(synthetic_ohlcv_df: pd.DataFrame):
 
 
 @pytest.mark.unit
+def test_fetch_earnings_dates_maps_reported_eps_to_eps_actual(monkeypatch):
+    """Los datos de yfinance con Reported EPS deben mapearse a eps_actual."""
+    from backend.data.earnings_loader import EarningsLoader
+
+    fake_df = pd.DataFrame(
+        {
+            "Reported EPS": [1.23],
+            "EPS Estimate": [1.10],
+            "Revenue Actual": [None],
+            "Revenue Estimate": [None],
+        },
+        index=[pd.Timestamp("2024-06-10", tz="UTC")],
+    )
+
+    class FakeTicker:
+        earnings_dates = fake_df
+
+    fake_yfinance = type("yf", (), {"Ticker": lambda symbol: FakeTicker()})
+    import sys
+
+    monkeypatch.setitem(sys.modules, "yfinance", fake_yfinance)
+
+    loader = EarningsLoader()
+    df = loader.fetch_earnings_dates("AAPL")
+
+    assert "eps_actual" in df.columns
+    assert df.loc[pd.Timestamp("2024-06-10", tz="UTC"), "eps_actual"] == 1.23
+    assert df.loc[pd.Timestamp("2024-06-10", tz="UTC"), "eps_estimate"] == 1.10
+
+
+@pytest.mark.unit
 def test_detect_gaps_positive(synthetic_ohlcv_df: pd.DataFrame):
     """Gap positivo > threshold se detecta."""
     detector = EventDetector()

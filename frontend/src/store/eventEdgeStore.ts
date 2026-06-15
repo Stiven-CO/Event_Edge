@@ -13,6 +13,20 @@ import type {
   ProbabilisticResult,
 } from "@/api/types";
 
+function _normalizeConditioning(conditioning: ConditioningParams): ConditioningParams {
+  return {
+    ...conditioning,
+    eps_surprise_pct_min:
+      conditioning.eps_surprise_pct_min != null
+        ? conditioning.eps_surprise_pct_min / 100
+        : undefined,
+    eps_surprise_pct_max:
+      conditioning.eps_surprise_pct_max != null
+        ? conditioning.eps_surprise_pct_max / 100
+        : undefined,
+  };
+}
+
 export type DataSource = "yfinance" | "mt5" | "tws";
 
 interface EventEdgeState {
@@ -22,6 +36,7 @@ interface EventEdgeState {
   model: ModelType;
   nPeriods: number;
   gapThreshold: number;
+  includeEarningsDays: boolean | null;
   bins: number[];
   periods: number[];
   conditioning: ConditioningParams;
@@ -47,6 +62,7 @@ interface EventEdgeState {
   setModel: (m: ModelType) => void;
   setNPeriods: (n: number) => void;
   setGapThreshold: (t: number) => void;
+  setIncludeEarningsDays: (v: boolean | null) => void;
   setBins: (b: number[]) => void;
   setPeriods: (p: number[]) => void;
   setConditioning: (c: ConditioningParams) => void;
@@ -102,6 +118,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   model: "bootstrap",
   nPeriods: 5,
   gapThreshold: 1.0,
+  includeEarningsDays: null,
   bins: [-0.05, -0.01, 0.01, 0.05],
   periods: [1, 3, 5, 10],
   conditioning: defaultConditioning,
@@ -127,6 +144,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   setModel: (model) => set({ model }),
   setNPeriods: (nPeriods) => set({ nPeriods: Math.max(0, Math.min(60, Math.trunc(nPeriods))) }),
   setGapThreshold: (gapThreshold) => set({ gapThreshold: Math.max(0.1, Math.min(20, Number.isFinite(gapThreshold) ? gapThreshold : 1.0)) }),
+  setIncludeEarningsDays: (includeEarningsDays) => set({ includeEarningsDays }),
   setBins: (bins) => set({ bins }),
   setPeriods: (periods) => set({ periods }),
   setConditioning: (conditioning) => set({ conditioning }),
@@ -147,7 +165,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   },
 
   fetchEvents: async () => {
-    const { symbol, eventType, dateStart, dateEnd, gapThreshold } = get();
+    const { symbol, eventType, dateStart, dateEnd, gapThreshold, includeEarningsDays } = get();
     set({ isLoadingEvents: true, error: null, infoMessage: null });
     try {
       const { dataSource, brokerStatuses } = get();
@@ -158,6 +176,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
           asset_class: "equity",
           event_type: eventType,
           gap_threshold_pct: gapThreshold,
+          include_earnings_days: eventType === "gap" ? includeEarningsDays : null,
           ...(dateStart ? { date_range_start: dateStart } : {}),
           ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
         }),
@@ -183,7 +202,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   },
 
   fetchMetrics: async () => {
-    const { symbol, eventType, model, nPeriods, gapThreshold, bins, conditioning, periods, dateStart, dateEnd, dataSource } = get();
+    const { symbol, eventType, model, nPeriods, gapThreshold, includeEarningsDays, bins, conditioning, periods, dateStart, dateEnd, dataSource } = get();
     set({ isLoadingMetrics: true, error: null, infoMessage: null });
 
     try {
@@ -193,6 +212,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         asset_class: "equity",
         event_type: eventType,
         gap_threshold_pct: gapThreshold,
+        include_earnings_days: eventType === "gap" ? includeEarningsDays : null,
         periods,
       });
 
@@ -205,7 +225,8 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         n_periods: nPeriods,
         bins,
         gap_threshold_pct: gapThreshold,
-        conditioning,
+        include_earnings_days: eventType === "gap" ? includeEarningsDays : null,
+        conditioning: _normalizeConditioning(conditioning),
         ...(dateStart ? { date_range_start: dateStart } : {}),
         ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
       };
@@ -231,7 +252,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   },
 
   fetchPriceAction: async () => {
-    const { symbol, eventType, nPeriods, conditioning, gapThreshold, dateStart, dateEnd, dataSource, brokerStatuses } = get();
+    const { symbol, eventType, nPeriods, conditioning, gapThreshold, includeEarningsDays, dateStart, dateEnd, dataSource, brokerStatuses } = get();
     set({ isLoadingPriceAction: true, infoMessage: null });
     try {
       const result = await endpoints.getPriceAction({
@@ -240,9 +261,10 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         asset_class: "equity",
         event_type: eventType,
         gap_threshold_pct: gapThreshold,
+        include_earnings_days: eventType === "gap" ? includeEarningsDays : null,
         n_periods: nPeriods,
         include_bands: true,
-        conditioning,
+        conditioning: _normalizeConditioning(conditioning),
         ...(dateStart ? { date_range_start: dateStart } : {}),
         ...(dateEnd ? { date_range_end: dateEnd } : {}),
       });

@@ -193,6 +193,7 @@ class AnalysisRequest(BaseModel):
     asset_class: str = "equity"
     event_type: EventType
     gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
+    include_earnings_days: bool | None = None
     n_periods: int = Field(default=5, ge=0, le=60)
     model: ModelType = ModelType.bootstrap
     bins: list[float] = Field(default_factory=lambda: list(_DEFAULT_BINS))
@@ -229,6 +230,7 @@ class DetectEventsRequest(BaseModel):
     asset_class: str = "equity"
     event_type: EventType
     gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
+    include_earnings_days: bool | None = None
     date_range_start: datetime | None = None
     date_range_end: datetime | None = None
 
@@ -250,7 +252,10 @@ class InformativeRequest(BaseModel):
     asset_class: str = "equity"
     event_type: EventType
     gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
+    include_earnings_days: bool | None = None
     periods: list[int] = Field(default_factory=lambda: [1, 3, 5, 10])
+    date_range_start: datetime | None = None
+    date_range_end: datetime | None = None
 
     @field_validator("symbol")
     @classmethod
@@ -380,6 +385,7 @@ class PriceActionRequest(BaseModel):
     asset_class: str = "equity"
     event_type: EventType
     gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
+    include_earnings_days: bool | None = None
     n_periods: int = Field(default=5, ge=0, le=60)
     include_bands: bool = True
     conditioning: ConditioningParams = Field(default_factory=ConditioningParams)

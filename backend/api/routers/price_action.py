@@ -9,7 +9,7 @@ from backend.config import Settings, get_settings
 from backend.core.event_detector import EventDetector
 from backend.core.feature_builder import FeatureBuilder
 from backend.core.price_action import compute_price_action
-from backend.data import EarningsLoader, MdhClient, MdhUnavailableError
+from backend.data import MdhClient, MdhUnavailableError
 
 router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
 
@@ -34,19 +34,16 @@ async def price_action_analysis(
     settings: Settings = Depends(get_settings),
     mdh_client: MdhClient = Depends(get_mdh_client),
 ) -> PriceActionResult:
-    loader = EarningsLoader()
     detector = EventDetector()
     feature_builder = FeatureBuilder()
 
     try:
-        # 1. Cargar OHLCV diario (siempre necesario, con start/end si el usuario los filtra)
-        ohlcv_daily, _ = await _load_ohlcv_daily(
+        # 1. OHLCV diario — siempre vía MDH (con ingest si no existe)
+        ohlcv_daily = await _load_ohlcv_daily(
             symbol=req.symbol,
             source=req.source,
             asset_class=req.asset_class,
-            settings=settings,
             mdh_client=mdh_client,
-            loader=loader,
             date_start=req.date_range_start,
             date_end=req.date_range_end,
         )
@@ -56,12 +53,24 @@ async def price_action_analysis(
                 detail=f"No OHLCV data available for {req.symbol}",
             )
 
-        # 2. Detectar y condicionar eventos (antes de pedir intradía)
-        earnings_df = loader.fetch_earnings_dates(req.symbol)
+        # 2. Earnings dates vía MDH — graceful degradation si no disponibles
+        try:
+            earnings_df = await mdh_client.fetch_earnings_dates(req.symbol)
+        except MdhUnavailableError as exc:
+            if req.event_type == EventType.earnings:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"MDH no disponible para earnings dates de {req.symbol}: {exc}",
+                )
+            earnings_df = _empty_earnings_df()
+
+        # 3. Detectar y condicionar eventos
         if req.event_type == EventType.earnings:
             events = detector.detect_earnings(ohlcv_daily, earnings_df)
         else:
-            earnings_dates = earnings_df.index.to_pydatetime().tolist()
+            earnings_dates = None
+            if req.include_earnings_days is not True:
+                earnings_dates = earnings_df.index.to_pydatetime().tolist()
             events = detector.detect_gaps(
                 ohlcv_daily,
                 threshold_pct=req.gap_threshold_pct,
@@ -72,24 +81,22 @@ async def price_action_analysis(
         features_df = feature_builder.build(ohlcv_daily, events)
         conditioned_df = apply_conditioning(features_df, req.conditioning)
 
-        # 3. Si horizonte intraday, pedir 30min solo para los días de eventos condicionados
+        # 4. Si horizonte intraday, cargar 30min solo para días de eventos condicionados
         ohlcv_intraday: pd.DataFrame | None = None
         if req.n_periods == 0 and not conditioned_df.empty:
             event_dates = sorted(set(
                 pd.Timestamp(row["date"]).tz_convert("UTC").date()
                 for _, row in conditioned_df.iterrows()
             ))
-            ohlcv_intraday, _ = await _load_ohlcv_intraday(
+            ohlcv_intraday = await _load_ohlcv_intraday(
                 symbol=req.symbol,
                 source=req.source,
                 asset_class=req.asset_class,
-                settings=settings,
                 mdh_client=mdh_client,
-                loader=loader,
                 event_dates=event_dates,
             )
 
-        # 4. Calcular price action
+        # 5. Calcular price action
         return compute_price_action(
             events_df=conditioned_df,
             ohlcv_daily_df=ohlcv_daily,
@@ -110,74 +117,94 @@ async def _load_ohlcv_daily(
     symbol: str,
     source: str,
     asset_class: str,
-    settings: Settings,
     mdh_client: MdhClient,
-    loader: EarningsLoader,
     date_start: pd.Timestamp | None = None,
     date_end: pd.Timestamp | None = None,
-) -> tuple[pd.DataFrame, str]:
-    """Carga OHLCV diario: MDH si disponible, fallback yfinance.
-    Pasa start/end cuando el usuario aplica filtro de fechas."""
-    selected_source = (source or "yfinance").lower()
+) -> pd.DataFrame:
+    """
+    Carga OHLCV diario vía MDH. Dispara ingesta si el dataset no existe.
+    Lanza HTTPException 503 si MDH no está disponible.
+    """
+    resolved_source = (source or "yfinance").lower()
 
-    if selected_source == "yfinance":
-        return loader.fetch_ohlcv(symbol, period="5y", interval="1d"), "yfinance"
+    # 1. Consultar lake
+    try:
+        df = await mdh_client.query_ohlcv(
+            symbol=symbol,
+            source=resolved_source,
+            asset_class=asset_class,
+            timeframe="1d",
+            start=date_start,
+            end=date_end,
+        )
+        if not df.empty:
+            return df
+    except MdhUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=f"MDH no disponible: {exc}")
 
-    if settings.mdh_enabled:
-        try:
-            df = await mdh_client.query_ohlcv(
-                symbol=symbol,
-                source=selected_source,
-                asset_class=asset_class,
-                timeframe="1d",
-                start=date_start,
-                end=date_end,
-            )
-            return df, selected_source
-        except MdhUnavailableError:
-            pass
-    return loader.fetch_ohlcv(symbol, period="5y", interval="1d"), "yfinance"
+    # 2. Dataset ausente → disparar ingesta
+    try:
+        await mdh_client.trigger_ingest(
+            symbol=symbol,
+            source=resolved_source,
+            asset_class=asset_class,
+            timeframe="1d",
+            type_saved="complete_historical",
+        )
+    except MdhUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No se pudo ingestar {symbol} vía {resolved_source}: {exc}",
+        )
+
+    # 3. Re-consultar
+    try:
+        return await mdh_client.query_ohlcv(
+            symbol=symbol,
+            source=resolved_source,
+            asset_class=asset_class,
+            timeframe="1d",
+            start=date_start,
+            end=date_end,
+        )
+    except MdhUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error al re-consultar {symbol} tras ingesta: {exc}",
+        )
 
 
 async def _load_ohlcv_intraday(
     symbol: str,
     source: str,
     asset_class: str,
-    settings: Settings,
     mdh_client: MdhClient,
-    loader: EarningsLoader,
     event_dates: list | None = None,
-) -> tuple[pd.DataFrame, str]:
+) -> pd.DataFrame:
     """
-    Carga OHLCV 30min SOLO para los días de eventos condicionados.
-    MDH: endpoint query-by-dates con fechas concretas (estrategia híbrida interna).
-    Fallback yfinance: descarga mínima (~60 días) si MDH no disponible.
+    Carga OHLCV 30min solo para los días de eventos condicionados via MDH
+    (estrategia specific_event, query-by-dates).
+    Retorna DataFrame vacío si MDH no puede proveer los datos.
     """
-    selected_source = (source or "yfinance").lower()
+    if not event_dates:
+        return pd.DataFrame()
 
-    if selected_source == "yfinance":
-        try:
-            df = loader.fetch_ohlcv(symbol, period="60d", interval="30m")
-            return df, "yfinance"
-        except Exception:
-            return pd.DataFrame(), "yfinance"
-
-    if settings.mdh_enabled and event_dates:
-        try:
-            date_strs = [d.isoformat() for d in event_dates]
-            df = await mdh_client.query_ohlcv_for_event_dates(
-                symbol=symbol,
-                source=selected_source,
-                asset_class=asset_class,
-                timeframe="30m",
-                event_dates=date_strs,
-            )
-            return df, selected_source
-        except MdhUnavailableError:
-            pass
+    resolved_source = (source or "yfinance").lower()
+    date_strs = [d.isoformat() for d in event_dates]
 
     try:
-        df = loader.fetch_ohlcv(symbol, period="60d", interval="30m")
-        return df, "yfinance"
-    except Exception:
-        return pd.DataFrame(), "yfinance"
+        return await mdh_client.query_ohlcv_for_event_dates(
+            symbol=symbol,
+            source=resolved_source,
+            asset_class=asset_class,
+            timeframe="30m",
+            event_dates=date_strs,
+        )
+    except MdhUnavailableError:
+        return pd.DataFrame()
+
+
+def _empty_earnings_df() -> pd.DataFrame:
+    df = pd.DataFrame(columns=["eps_actual", "eps_estimate", "revenue_actual", "revenue_estimate"])
+    df.index = pd.DatetimeIndex([], tz="UTC", name="date")
+    return df

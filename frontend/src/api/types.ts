@@ -144,6 +144,7 @@ export interface DetectEventsRequest {
   asset_class?: string;
   event_type: EventType;
   gap_threshold_pct: number;
+  include_earnings_days?: boolean | null;
   date_range_start?: string;
   date_range_end?: string;
 }
@@ -154,6 +155,7 @@ export interface InformativeRequest {
   asset_class?: string;
   event_type: EventType;
   gap_threshold_pct: number;
+  include_earnings_days?: boolean | null;
   periods?: number[];
 }
 
@@ -163,6 +165,7 @@ export interface AnalysisRequest {
   asset_class: string;
   event_type: EventType;
   gap_threshold_pct: number;
+  include_earnings_days?: boolean | null;
   n_periods: number;
   model: ModelType;
   bins: number[];
@@ -206,6 +209,7 @@ export interface PriceActionRequest {
   asset_class?: string;
   event_type: EventType;
   gap_threshold_pct: number;
+  include_earnings_days?: boolean | null;
   n_periods: number;
   include_bands: boolean;
   conditioning: ConditioningParams;

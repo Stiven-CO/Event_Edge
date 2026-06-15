@@ -136,6 +136,7 @@ export function SidebarMenu() {
   const companyName  = useEventEdgeStore((s) => s.companyName);
   const eventType    = useEventEdgeStore((s) => s.eventType);
   const gapThreshold = useEventEdgeStore((s) => s.gapThreshold);
+  const includeEarningsDays = useEventEdgeStore((s) => s.includeEarningsDays);
   const model        = useEventEdgeStore((s) => s.model);
   const nPeriods     = useEventEdgeStore((s) => s.nPeriods);
   const bins         = useEventEdgeStore((s) => s.bins);
@@ -149,6 +150,7 @@ export function SidebarMenu() {
   const setSymbol       = useEventEdgeStore((s) => s.setSymbol);
   const setEventType    = useEventEdgeStore((s) => s.setEventType);
   const setGapThreshold = useEventEdgeStore((s) => s.setGapThreshold);
+  const setIncludeEarningsDays = useEventEdgeStore((s) => s.setIncludeEarningsDays);
   const clearResults    = useEventEdgeStore((s) => s.clearResults);
   const setModel        = useEventEdgeStore((s) => s.setModel);
   const setNPeriods     = useEventEdgeStore((s) => s.setNPeriods);
@@ -243,25 +245,42 @@ export function SidebarMenu() {
           </div>
 
           {eventType === "gap" && (
-            <div>
-              <label className="label">Umbral de detección (%)</label>
-              <input
-                type="number"
-                className="input mt-1"
-                min={0.1}
-                max={20}
-                step={0.1}
-                value={Number.isFinite(gapThreshold) ? gapThreshold : 1}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  if (raw === "") {
-                    setGapThreshold(1);
-                    return;
-                  }
-                  setGapThreshold(Number(raw));
-                }}
-              />
-            </div>
+            <>
+              <div>
+                <label className="label">Umbral de detección (%)</label>
+                <input
+                  type="number"
+                  className="input mt-1"
+                  min={0.1}
+                  max={20}
+                  step={0.1}
+                  value={Number.isFinite(gapThreshold) ? gapThreshold : 1}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === "") {
+                      setGapThreshold(1);
+                      return;
+                    }
+                    setGapThreshold(Number(raw));
+                  }}
+                />
+              </div>
+
+              <div>
+                <label className="label">Incluir earnings days en gaps</label>
+                <select
+                  className="input mt-1"
+                  value={includeEarningsDays === true ? "true" : "none"}
+                  onChange={(e) => {
+                    const v = e.target.value === "true" ? true : null;
+                    setIncludeEarningsDays(v);
+                  }}
+                >
+                  <option value="none">None (excluir earnings days)</option>
+                  <option value="true">True (incluir earnings days)</option>
+                </select>
+              </div>
+            </>
           )}
 
           {/* Rango de fechas */}
