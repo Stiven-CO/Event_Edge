@@ -2,12 +2,6 @@ import { useMemo } from "react";
 
 import { useEventEdgeStore } from "@/store/eventEdgeStore";
 
-const sourceLabel: Record<string, string> = {
-  yfinance: "YFinance",
-  mt5: "MT5",
-  tws: "TWS",
-};
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtPct(v: number | null | undefined, decimals = 2): string {
   if (v == null) return "n/a";
@@ -36,58 +30,52 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 
 // ── Main component ────────────────────────────────────────────────────────────
 export function MetricsInfoPanel() {
-  const metrics     = useEventEdgeStore((s) => s.informativeMetrics);
-  const companyName = useEventEdgeStore((s) => s.companyName);
-  const events      = useEventEdgeStore((s) => s.events);
+  const probabilisticResult = useEventEdgeStore((s) => s.probabilisticResult);
+  const companyName         = useEventEdgeStore((s) => s.companyName);
 
-  const dateRange = useMemo(() => {
-    if (events.length === 0) return null;
-    const dates = events.map((e) => e.date).sort();
-    return { start: dates[0], end: dates[dates.length - 1] };
-  }, [events]);
+  const summary = probabilisticResult?.conditioned_summary ?? null;
 
   const sortedPeriods = useMemo(
     () =>
-      metrics?.avg_forward_return
-        ? Object.keys(metrics.avg_forward_return).map(Number).sort((a, b) => a - b)
+      summary?.avg_forward_return
+        ? Object.keys(summary.avg_forward_return).map(Number).sort((a, b) => a - b)
         : [],
-    [metrics],
+    [summary],
   );
+
+  const filterRatePct = summary ? `${(summary.filter_rate * 100).toFixed(1)}%` : "n/a";
 
   return (
     <section className="card p-4 mb-4">
       {/* Header */}
       <div className="mb-4 flex flex-col gap-0.5 border-b border-surface-border pb-3">
         <div className="flex items-center justify-between">
-          <h3 className="font-display text-lg font-semibold text-ink-primary">Métricas Informativas</h3>
-          <span className="rounded-full bg-surface-overlay px-2 py-0.5 text-xs text-ink-muted">
-            {metrics ? sourceLabel[metrics.data_source] ?? metrics.data_source : "n/a"}
-          </span>
+          <h3 className="font-display text-lg font-semibold text-ink-primary">Análisis Condicionado</h3>
+          {summary && (
+            <span className="rounded-full bg-surface-overlay px-2 py-0.5 text-xs text-ink-muted">
+              {summary.n_conditioned_events} / {summary.n_total_events} eventos ({filterRatePct})
+            </span>
+          )}
         </div>
         {companyName && (
           <p className="text-sm font-medium text-accent">{companyName}</p>
         )}
-        {dateRange && (
-          <p className="text-xs text-ink-muted font-mono">
-            {dateRange.start} → {dateRange.end}
-          </p>
-        )}
       </div>
 
-      {!metrics ? (
-        <p className="text-sm text-ink-muted">Aún no hay métricas calculadas.</p>
+      {!summary ? (
+        <p className="text-sm text-ink-muted">Calcula el análisis condicionado para ver estas métricas.</p>
       ) : (
         <div className="space-y-5">
 
           {/* ── Fila 1: frecuencia + retorno P0 ── */}
           <div className="grid grid-cols-4 gap-3">
-            <StatCard label="Eventos"      value={String(metrics.n_total_events)} />
-            <StatCard label="Por año"       value={metrics.frequency_per_year.toFixed(2)} />
-            <StatCard label="Por trimestre" value={metrics.frequency_per_quarter.toFixed(2)} />
+            <StatCard label="Eventos cond." value={String(summary.n_conditioned_events)} />
+            <StatCard label="Por año"        value={summary.frequency_per_year.toFixed(2)} />
+            <StatCard label="Por trimestre"  value={summary.frequency_per_quarter.toFixed(2)} />
             <StatCard
               label="Retorno P0 μ±σ"
-              value={fmtPct(metrics.event_day_return_mean)}
-              sub={metrics.event_day_return_mean == null ? undefined : `±σ ${fmtPct(metrics.event_day_return_std)}`}
+              value={fmtPct(summary.event_day_return_mean)}
+              sub={summary.event_day_return_mean == null ? undefined : `±σ ${fmtPct(summary.event_day_return_std)}`}
             />
           </div>
 
@@ -95,34 +83,34 @@ export function MetricsInfoPanel() {
           <div className="grid grid-cols-4 gap-3">
             <StatCard
               label="Gap μ±σ"
-              value={metrics.gap_mean == null ? "n/a" : fmtPct(metrics.gap_mean)}
-              sub={metrics.gap_mean == null ? undefined : `±σ ${fmtPct(metrics.gap_std)}`}
+              value={summary.gap_mean == null ? "n/a" : fmtPct(summary.gap_mean)}
+              sub={summary.gap_mean == null ? undefined : `±σ ${fmtPct(summary.gap_std)}`}
             />
             <StatCard
               label="Rango P0 μ±σ"
-              value={fmtPct(metrics.event_day_range_mean)}
-              sub={metrics.event_day_range_mean == null ? undefined : `±σ ${fmtPct(metrics.event_day_range_std)}`}
+              value={fmtPct(summary.event_day_range_mean)}
+              sub={summary.event_day_range_mean == null ? undefined : `±σ ${fmtPct(summary.event_day_range_std)}`}
             />
             <StatCard
               label="Vol. P0 μ±σ"
-              value={metrics.event_day_volume_mean == null ? "n/a" : fmtVol(metrics.event_day_volume_mean)}
-              sub={metrics.event_day_volume_mean == null ? undefined : `±σ ${fmtVol(metrics.event_day_volume_std ?? 0)}`}
+              value={summary.event_day_volume_mean == null ? "n/a" : fmtVol(summary.event_day_volume_mean)}
+              sub={summary.event_day_volume_mean == null ? undefined : `±σ ${fmtVol(summary.event_day_volume_std ?? 0)}`}
             />
             <StatCard
               label="Vol. CV%"
               value={
-                metrics.event_day_volume_mean == null || metrics.event_day_volume_mean === 0
+                summary.event_day_volume_mean == null || summary.event_day_volume_mean === 0
                   ? "n/a"
-                  : `${(((metrics.event_day_volume_std ?? 0) / metrics.event_day_volume_mean) * 100).toFixed(1)}%`
+                  : `${(((summary.event_day_volume_std ?? 0) / summary.event_day_volume_mean) * 100).toFixed(1)}%`
               }
               sub="dispersión entre eventos"
             />
           </div>
 
-          {/* ── Tabla única: rendimiento promedio y desviaciones ── */}
+          {/* ── Tabla: rendimiento promedio condicionado ── */}
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">
-              Rendimiento promedio y desviaciones
+              Rendimiento promedio condicionado
             </p>
             <div className="overflow-hidden rounded-lg border border-surface-border">
               <table className="data-table">
@@ -135,9 +123,8 @@ export function MetricsInfoPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {/* Pn: P1-Open → Pn-Close */}
                   {sortedPeriods.map((n) => {
-                    const fwd = metrics.avg_forward_return?.[n];
+                    const fwd = summary.avg_forward_return[n];
                     return (
                       <tr key={n}>
                         <td className="font-mono font-medium text-accent">P{n}</td>
@@ -161,4 +148,3 @@ export function MetricsInfoPanel() {
     </section>
   );
 }
-

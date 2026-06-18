@@ -1,8 +1,8 @@
 """
-Construye features de condicionamiento para cada EventRecord.
+Construye features de condicionamiento para el análisis probabilístico.
 
 Regla anti-look-ahead:
-    Para el evento en fecha T, todos los indicadores se calculan usando
+    Para el evento/barra en fecha T, todos los indicadores se calculan usando
     datos hasta T-1 inclusive (cierre previo).
 
 Clusters:
@@ -10,11 +10,11 @@ Clusters:
     B - Momentum:       return_5d, return_20d, rsi14
     C - Sobreextensión: bb_position, bb_width_pct, rsi14_zone
     D - Volatilidad:    hist_vol_10d, vol_ratio_10_30, atr_pct, vol_regime
-    E - Fundamental:    eps_surprise_pct, guidance  (solo earnings)
+    E - Fundamental:    eps_surprise_pct, guidance  (solo path earnings)
     F - Posicionamiento: gap_pct
     G - Estacionalidad: day_of_week, month, quarter, earnings_season
 
-Dependencias: pandas/numpy
+Dependencias: pandas, numpy, ta
 """
 from __future__ import annotations
 
@@ -22,12 +22,15 @@ import math
 
 import numpy as np
 import pandas as pd
+import ta
 
 from backend.api.schemas import (
     BBPosition,
     DayOfWeek,
     EarningsSeason,
     EventRecord,
+    EventType,
+    GuidanceDirection,
     MonthOfYear,
     Quarter,
     RSIZone,
@@ -162,66 +165,163 @@ class FeatureBuilder:
 
         return pd.DataFrame(rows, columns=_RESULT_COLUMNS)
 
+    def build_all_bars(
+        self,
+        ohlcv_df: pd.DataFrame,
+        symbol: str = "",
+    ) -> pd.DataFrame:
+        """
+        Retorna DataFrame con _RESULT_COLUMNS, una fila por barra OHLCV.
+        El condicionamiento posterior define cuáles barras se analizan como eventos.
+        Cluster E (fundamental) siempre vacío — solo disponible en path earnings.
+        """
+        if ohlcv_df.empty:
+            return pd.DataFrame(columns=_RESULT_COLUMNS)
+
+        df = ohlcv_df.sort_index()
+
+        # ── Pre-computar series de indicadores sobre todo el OHLCV ──────────
+        s_ema5_vs_ema20  = self._calc_ema5_vs_ema20_ratio(df)
+        s_price_vs_ema50 = self._calc_price_vs_ema50_pct(df)
+        s_trend_dir      = self._calc_trend_direction(df)
+        s_return_5d      = self._calc_return_nd(df, 5)
+        s_return_20d     = self._calc_return_nd(df, 20)
+        s_rsi14          = self._calc_rsi(df, 14)
+        s_bb_position, s_bb_width = self._calc_bb_features(df)
+        s_hist_vol_10d   = self._calc_hist_vol(df, 10)
+        s_hist_vol_30d   = self._calc_hist_vol(df, 30)
+        s_atr_pct        = self._calc_atr_pct(df, 14)
+
+        # gap_pct por barra: (open[t] - close[t-1]) / close[t-1]
+        gap_pct_series = (
+            (df["open"] - df["close"].shift(1)) / df["close"].shift(1)
+        ).fillna(0.0)
+
+        # Percentiles de vol_10d para vol_regime
+        vol10_vals = s_hist_vol_10d.dropna()
+        vol10_p33 = float(vol10_vals.quantile(0.33)) if len(vol10_vals) > 0 else 0.0
+        vol10_p66 = float(vol10_vals.quantile(0.66)) if len(vol10_vals) > 0 else 0.0
+
+        # RSI zone (vectorizado)
+        rsi14_zone_series = pd.Series(index=df.index, dtype=object, name="rsi14_zone")
+        rsi14_zone_series[s_rsi14 < 30]  = RSIZone.oversold
+        rsi14_zone_series[s_rsi14 > 70]  = RSIZone.overbought
+        rsi14_zone_series[(s_rsi14 >= 30) & (s_rsi14 <= 70)] = RSIZone.neutral
+
+        # vol_ratio (vectorizado)
+        vol_ratio_series = (
+            s_hist_vol_10d / s_hist_vol_30d.replace(0.0, np.nan)
+        ).rename("vol_ratio_10_30")
+
+        # vol_regime (vectorizado)
+        vol_regime_series = pd.Series(index=df.index, dtype=object, name="vol_regime")
+        valid_vol = s_hist_vol_10d.notna()
+        vol_regime_series[valid_vol & (s_hist_vol_10d <= vol10_p33)]  = VolRegime.low
+        vol_regime_series[
+            valid_vol & (s_hist_vol_10d > vol10_p33) & (s_hist_vol_10d <= vol10_p66)
+        ] = VolRegime.normal
+        vol_regime_series[valid_vol & (s_hist_vol_10d > vol10_p66)] = VolRegime.high
+
+        # Estacionalidad (vectorizado)
+        day_of_week_series    = pd.Series(
+            [_ts_to_day_of_week(ts) for ts in df.index], index=df.index
+        )
+        month_series          = pd.Series(
+            [_ts_to_month(ts) for ts in df.index], index=df.index
+        )
+        quarter_series        = pd.Series(
+            [_ts_to_quarter(ts) for ts in df.index], index=df.index
+        )
+        earnings_season_series = pd.Series(
+            [_ts_to_earnings_season(ts) for ts in df.index], index=df.index
+        )
+
+        result = pd.DataFrame(
+            {
+                "date":                list(df.index),
+                "event_type":          EventType.gap,
+                "symbol":              symbol,
+                "gap_pct":             gap_pct_series.values,
+                "ema5_vs_ema20_ratio": s_ema5_vs_ema20.values,
+                "price_vs_ema50_pct":  s_price_vs_ema50.values,
+                "trend_direction":     s_trend_dir.values,
+                "return_5d":           s_return_5d.values,
+                "return_20d":          s_return_20d.values,
+                "rsi14":               s_rsi14.values,
+                "bb_position":         s_bb_position.values,
+                "bb_width_pct":        s_bb_width.values,
+                "rsi14_zone":          rsi14_zone_series.values,
+                "hist_vol_10d":        s_hist_vol_10d.values,
+                "vol_ratio_10_30":     vol_ratio_series.values,
+                "atr_pct":             s_atr_pct.values,
+                "vol_regime":          vol_regime_series.values,
+                "eps_surprise_pct":    None,
+                "guidance":            GuidanceDirection.not_available,
+                "day_of_week":         day_of_week_series.values,
+                "month":               month_series.values,
+                "quarter":             quarter_series.values,
+                "earnings_season":     earnings_season_series.values,
+            },
+            index=df.index,
+        )
+
+        return result[_RESULT_COLUMNS]
+
     # ── Cluster A — Tendencia ────────────────────────────────────────────────
 
     def _calc_ema5_vs_ema20_ratio(self, df: pd.DataFrame) -> pd.Series:
         """(EMA5_{T-1} - EMA20_{T-1}) / EMA20_{T-1} × 100"""
         close = df["close"]
-        ema5 = close.ewm(span=5, adjust=False, min_periods=5).mean().shift(1)
-        ema20 = close.ewm(span=20, adjust=False, min_periods=20).mean().shift(1)
+        ema5  = ta.trend.ema_indicator(close, window=5,  fillna=False).shift(1)
+        ema20 = ta.trend.ema_indicator(close, window=20, fillna=False).shift(1)
         ratio = (ema5 - ema20) / ema20 * 100
         return ratio.replace([np.inf, -np.inf], np.nan).rename("ema5_vs_ema20_ratio")
 
     def _calc_price_vs_ema50_pct(self, df: pd.DataFrame) -> pd.Series:
         """(close_{T-1} - EMA50_{T-1}) / EMA50_{T-1} × 100"""
-        close = df["close"]
+        close      = df["close"]
         prev_close = close.shift(1)
-        ema50 = close.ewm(span=50, adjust=False, min_periods=50).mean().shift(1)
+        ema50      = ta.trend.ema_indicator(close, window=50, fillna=False).shift(1)
         pct = (prev_close - ema50) / ema50 * 100
         return pct.replace([np.inf, -np.inf], np.nan).rename("price_vs_ema50_pct")
 
     def _calc_trend_direction(self, df: pd.DataFrame) -> pd.Series:
         """
-        Bullish:  EMA5 > EMA20 > EMA50 (las tres alineadas alcistas)
-        Bearish:  EMA5 < EMA20 < EMA50 (las tres alineadas bajistas)
+        Bullish:  EMA5 > EMA20 > EMA50
+        Bearish:  EMA5 < EMA20 < EMA50
         Sideways: cualquier otro orden
         """
         close = df["close"]
-        ema5  = close.ewm(span=5,  adjust=False, min_periods=5 ).mean().shift(1)
-        ema20 = close.ewm(span=20, adjust=False, min_periods=20).mean().shift(1)
-        ema50 = close.ewm(span=50, adjust=False, min_periods=50).mean().shift(1)
+        ema5  = ta.trend.ema_indicator(close, window=5,  fillna=False).shift(1)
+        ema20 = ta.trend.ema_indicator(close, window=20, fillna=False).shift(1)
+        ema50 = ta.trend.ema_indicator(close, window=50, fillna=False).shift(1)
 
-        result = pd.Series(index=df.index, dtype=object, name="trend_direction")
+        result  = pd.Series(index=df.index, dtype=object, name="trend_direction")
         bullish = (ema5 > ema20) & (ema20 > ema50)
         bearish = (ema5 < ema20) & (ema20 < ema50)
-        result[bullish] = TrendDirection.bullish
-        result[bearish] = TrendDirection.bearish
+        result[bullish]            = TrendDirection.bullish
+        result[bearish]            = TrendDirection.bearish
         result[~bullish & ~bearish] = TrendDirection.sideways
-        # Dejar NaN donde no hay datos suficientes
-        no_data = ema50.isna()
-        result[no_data] = None
+        result[ema50.isna()]       = None
         return result
 
     # ── Cluster B — Momentum ─────────────────────────────────────────────────
 
     def _calc_return_nd(self, df: pd.DataFrame, n: int) -> pd.Series:
         """(close_{T-1} - close_{T-1-n}) / close_{T-1-n} × 100"""
-        prev = df["close"].shift(1)
+        prev   = df["close"].shift(1)
         prev_n = df["close"].shift(1 + n)
-        pct = (prev - prev_n) / prev_n * 100
+        pct    = (prev - prev_n) / prev_n * 100
         return pct.replace([np.inf, -np.inf], np.nan).rename(f"return_{n}d")
 
     def _calc_rsi(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
-        """RSI de Wilder calculado sobre close, shifteado en T-1."""
+        """RSI(period) calculado en T-1 (anti-look-ahead)."""
         close = df["close"].shift(1)
-        delta = close.diff()
-        gain = delta.clip(lower=0)
-        loss = (-delta).clip(lower=0)
-        avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-        avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-        rs = avg_gain / avg_loss.replace(0, np.nan)
-        rsi = 100 - (100 / (1 + rs))
-        return rsi.replace([np.inf, -np.inf], np.nan).rename(f"rsi{period}")
+        return (
+            ta.momentum.RSIIndicator(close=close, window=period, fillna=False)
+            .rsi()
+            .rename(f"rsi{period}")
+        )
 
     # ── Cluster C — Sobreextensión ───────────────────────────────────────────
 
@@ -233,45 +333,40 @@ class FeatureBuilder:
         BB(20, 2) sobre close; clasifica open_T respecto a bandas_{T-1}.
         bb_width_pct = (upper - lower) / middle × 100
         """
-        close = df["close"]
+        close  = df["close"]
         open_t = df["open"]
-        index = df.index
+        index  = df.index
 
-        rolling_mean  = close.rolling(window=20, min_periods=20).mean()
-        rolling_std   = close.rolling(window=20, min_periods=20).std(ddof=0)
-        bb_lower = (rolling_mean - 2.0 * rolling_std).shift(1)
-        bb_upper = (rolling_mean + 2.0 * rolling_std).shift(1)
-        bb_mid   = rolling_mean.shift(1)
+        bb = ta.volatility.BollingerBands(close=close, window=20, window_dev=2, fillna=False)
+        bb_lower = bb.bollinger_lband().shift(1)
+        bb_upper = bb.bollinger_hband().shift(1)
+        bb_mid   = bb.bollinger_mavg().shift(1)
 
-        pos_series   = pd.Series(index=index, dtype=object, name="bb_position")
-        width_series = pd.Series(index=index, dtype=float,  name="bb_width_pct")
+        band_range   = bb_upper - bb_lower
+        width_series = (band_range / bb_mid * 100).rename("bb_width_pct")
 
-        for ts in index:
-            lo = bb_lower.get(ts)
-            hi = bb_upper.get(ts)
-            mi = bb_mid.get(ts)
-            op = open_t.get(ts)
+        # Clasificación vectorizada con np.select
+        conditions = [
+            open_t < bb_lower,
+            open_t <= bb_lower + 0.33 * band_range,
+            open_t <= bb_upper - 0.33 * band_range,
+            open_t <= bb_upper,
+        ]
+        choices = [
+            BBPosition.below_lower,
+            BBPosition.in_lower,
+            BBPosition.middle,
+            BBPosition.in_upper,
+        ]
+        pos_arr    = np.select(conditions, choices, default=BBPosition.above_upper)
+        pos_series = pd.Series(pos_arr, index=index, dtype=object, name="bb_position")
 
-            if any(v is None for v in (lo, hi, mi, op)):
-                continue
-            if any(math.isnan(v) for v in (lo, hi, mi, op)):
-                continue
-
-            band_range = hi - lo
-            if band_range > 0:
-                width_series[ts] = band_range / mi * 100
-                if op < lo:
-                    pos_series[ts] = BBPosition.below_lower
-                elif op <= lo + 0.33 * band_range:
-                    pos_series[ts] = BBPosition.in_lower
-                elif op <= hi - 0.33 * band_range:
-                    pos_series[ts] = BBPosition.middle
-                elif op <= hi:
-                    pos_series[ts] = BBPosition.in_upper
-                else:
-                    pos_series[ts] = BBPosition.above_upper
-            else:
-                pos_series[ts] = BBPosition.middle
+        # Limpiar barras sin datos suficientes
+        no_data = bb_lower.isna() | open_t.isna()
+        pos_series[no_data]                = None
+        width_series[no_data]              = np.nan
+        pos_series[band_range <= 0]        = BBPosition.middle
+        width_series[band_range <= 0]      = np.nan
 
         return pos_series, width_series
 
@@ -285,18 +380,11 @@ class FeatureBuilder:
 
     def _calc_atr_pct(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """ATR(period)_{T-1} / close_{T-1} × 100"""
-        high  = df["high"]
-        low   = df["low"]
-        close = df["close"]
-        prev_close = close.shift(1)
-
-        tr = pd.concat([
-            high - low,
-            (high - prev_close).abs(),
-            (low  - prev_close).abs(),
-        ], axis=1).max(axis=1)
-
-        atr = tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+        prev_close = df["close"].shift(1)
+        atr = ta.volatility.AverageTrueRange(
+            high=df["high"], low=df["low"], close=df["close"],
+            window=period, fillna=False,
+        ).average_true_range()
         atr_pct = atr / prev_close * 100
         return atr_pct.shift(1).replace([np.inf, -np.inf], np.nan).rename(f"atr_pct_{period}")
 
@@ -305,13 +393,16 @@ class FeatureBuilder:
 # Helpers de estacionalidad
 # ---------------------------------------------------------------------------
 
-_DOW_MAP = {0: DayOfWeek.monday, 1: DayOfWeek.tuesday, 2: DayOfWeek.wednesday,
-            3: DayOfWeek.thursday, 4: DayOfWeek.friday}
+_DOW_MAP = {
+    0: DayOfWeek.monday,  1: DayOfWeek.tuesday,  2: DayOfWeek.wednesday,
+    3: DayOfWeek.thursday, 4: DayOfWeek.friday,
+    5: DayOfWeek.saturday, 6: DayOfWeek.sunday,
+}
 
 _MONTH_MAP = {
-    1: MonthOfYear.jan, 2: MonthOfYear.feb, 3: MonthOfYear.mar,
-    4: MonthOfYear.apr, 5: MonthOfYear.may, 6: MonthOfYear.jun,
-    7: MonthOfYear.jul, 8: MonthOfYear.aug, 9: MonthOfYear.sep,
+    1: MonthOfYear.jan,  2: MonthOfYear.feb,  3: MonthOfYear.mar,
+    4: MonthOfYear.apr,  5: MonthOfYear.may,  6: MonthOfYear.jun,
+    7: MonthOfYear.jul,  8: MonthOfYear.aug,  9: MonthOfYear.sep,
     10: MonthOfYear.oct, 11: MonthOfYear.nov, 12: MonthOfYear.dec,
 }
 
@@ -320,7 +411,6 @@ _QUARTER_MAP = {1: Quarter.q1, 2: Quarter.q1, 3: Quarter.q1,
                 7: Quarter.q3, 8: Quarter.q3, 9: Quarter.q3,
                 10: Quarter.q4, 11: Quarter.q4, 12: Quarter.q4}
 
-# Peak earnings season: semanas 1-6 de cada trimestre (jan, apr, jul, oct)
 _PEAK_MONTHS = {1, 4, 7, 10}
 
 
@@ -337,7 +427,6 @@ def _ts_to_quarter(ts: pd.Timestamp) -> Quarter | None:
 
 
 def _ts_to_earnings_season(ts: pd.Timestamp) -> EarningsSeason:
-    """Peak: meses de máxima concentración de earnings (ene, abr, jul, oct)."""
     return EarningsSeason.peak if ts.month in _PEAK_MONTHS else EarningsSeason.off_season
 
 

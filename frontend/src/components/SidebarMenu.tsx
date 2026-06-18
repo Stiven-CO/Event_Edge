@@ -3,14 +3,20 @@ import { useMemo, useState } from "react";
 
 import type {
   BBPosition, ConditioningParams, DayOfWeek, EarningsSeason,
-  EventType, GuidanceDirection, ModelType,
+  GuidanceDirection, ModelType,
   MonthOfYear, Quarter, RSIZone, TrendDirection, VolRegime,
 } from "@/api/types";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { useEvents } from "@/hooks/useEvents";
-import { useEventEdgeStore } from "@/store/eventEdgeStore";
+import {
+  ASSET_CLASS_OPTIONS,
+  SOURCE_OPTIONS,
+  type DataSource,
+  type TypeData,
+  useEventEdgeStore,
+} from "@/store/eventEdgeStore";
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const symbolRe = /^[A-Z]{1,5}$/;
 
 const modelDescriptions: Record<ModelType, string> = {
@@ -18,6 +24,12 @@ const modelDescriptions: Record<ModelType, string> = {
   bootstrap:   "Re-muestreo robusto con intervalos por percentiles.",
   kde:         "Densidad suavizada para colas continuas.",
   bayesian:    "Posterior Beta con prior de Laplace.",
+};
+
+const TYPE_DATA_LABEL: Record<TypeData, string> = {
+  ohlcv:       "OHLCV (precio)",
+  fundamental: "Fundamental",
+  macro:       "Macro / Económico",
 };
 
 interface RangeState { min?: number; max?: number }
@@ -41,15 +53,11 @@ function validateBins(values: number[]): string | null {
   return null;
 }
 
-// ── Accordion wrapper ─────────────────────────────────────────────────────────
+// ── Accordion ─────────────────────────────────────────────────────────────────
 function Accordion({
-  title,
-  defaultOpen = false,
-  children,
+  title, defaultOpen = false, children,
 }: {
-  title: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
+  title: string; defaultOpen?: boolean; children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -60,11 +68,9 @@ function Accordion({
         onClick={() => setOpen((v) => !v)}
       >
         <span>{title}</span>
-        {open ? (
-          <ChevronUp className="h-4 w-4 text-ink-muted" />
-        ) : (
-          <ChevronDown className="h-4 w-4 text-ink-muted" />
-        )}
+        {open
+          ? <ChevronUp   className="h-4 w-4 text-ink-muted" />
+          : <ChevronDown className="h-4 w-4 text-ink-muted" />}
       </button>
       {open && (
         <div className="border-t border-surface-border bg-surface-base/40 px-4 py-4 space-y-3 animate-fade-in">
@@ -76,12 +82,15 @@ function Accordion({
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return <label className="label">{children}</label>;
+}
+
 function RangeRow({
   label, min, max, value, onChange,
 }: {
   label: string; min: number; max: number;
-  value: RangeState;
-  onChange: (range: RangeState) => void;
+  value: RangeState; onChange: (r: RangeState) => void;
 }) {
   return (
     <div>
@@ -103,8 +112,7 @@ function RangeRow({
 function CheckboxGroup<T extends string>({
   label, values, selected, onToggle,
 }: {
-  label: string; values: T[]; selected: T[];
-  onToggle: (v: T) => void;
+  label: string; values: T[]; selected: T[]; onToggle: (v: T) => void;
 }) {
   return (
     <div>
@@ -112,9 +120,7 @@ function CheckboxGroup<T extends string>({
       <div className="flex flex-wrap gap-1.5">
         {values.map((v) => (
           <button
-            key={v}
-            type="button"
-            onClick={() => onToggle(v)}
+            key={v} type="button" onClick={() => onToggle(v)}
             className={`rounded-md border px-2 py-1 text-xs transition ${
               selected.includes(v)
                 ? "border-accent bg-accent/15 text-accent"
@@ -131,45 +137,56 @@ function CheckboxGroup<T extends string>({
 
 // ── Main SidebarMenu ──────────────────────────────────────────────────────────
 export function SidebarMenu() {
-  // Store selectors
+  // ── Store read ───────────────────────────────────────────────────────────────
   const symbol       = useEventEdgeStore((s) => s.symbol);
   const companyName  = useEventEdgeStore((s) => s.companyName);
+  const source       = useEventEdgeStore((s) => s.source);
+  const mt5Account   = useEventEdgeStore((s) => s.mt5Account);
+  const ohlcvSource  = useEventEdgeStore((s) => s.ohlcvSource);
+  const error        = useEventEdgeStore((s) => s.error);
+  const typeData     = useEventEdgeStore((s) => s.typeData);
+  const assetClass   = useEventEdgeStore((s) => s.assetClass);
   const eventType    = useEventEdgeStore((s) => s.eventType);
-  const gapThreshold = useEventEdgeStore((s) => s.gapThreshold);
-  const includeEarningsDays = useEventEdgeStore((s) => s.includeEarningsDays);
   const model        = useEventEdgeStore((s) => s.model);
   const nPeriods     = useEventEdgeStore((s) => s.nPeriods);
   const bins         = useEventEdgeStore((s) => s.bins);
-  const periods      = useEventEdgeStore((s) => s.periods);
   const conditioning = useEventEdgeStore((s) => s.conditioning);
   const dateStart    = useEventEdgeStore((s) => s.dateStart);
   const dateEnd      = useEventEdgeStore((s) => s.dateEnd);
   const events       = useEventEdgeStore((s) => s.events);
   const probabilisticResult = useEventEdgeStore((s) => s.probabilisticResult);
 
+  // ── Store write ──────────────────────────────────────────────────────────────
   const setSymbol       = useEventEdgeStore((s) => s.setSymbol);
-  const setEventType    = useEventEdgeStore((s) => s.setEventType);
-  const setGapThreshold = useEventEdgeStore((s) => s.setGapThreshold);
-  const setIncludeEarningsDays = useEventEdgeStore((s) => s.setIncludeEarningsDays);
-  const clearResults    = useEventEdgeStore((s) => s.clearResults);
+  const setSource       = useEventEdgeStore((s) => s.setSource);
+  const setMt5Account   = useEventEdgeStore((s) => s.setMt5Account);
+  const setOhlcvSource  = useEventEdgeStore((s) => s.setOhlcvSource);
+  const setTypeData     = useEventEdgeStore((s) => s.setTypeData);
+  const setAssetClass   = useEventEdgeStore((s) => s.setAssetClass);
   const setModel        = useEventEdgeStore((s) => s.setModel);
   const setNPeriods     = useEventEdgeStore((s) => s.setNPeriods);
   const setBins         = useEventEdgeStore((s) => s.setBins);
-  const setPeriods      = useEventEdgeStore((s) => s.setPeriods);
   const setConditioning = useEventEdgeStore((s) => s.setConditioning);
   const resetConditioning = useEventEdgeStore((s) => s.resetConditioning);
   const setDateStart    = useEventEdgeStore((s) => s.setDateStart);
   const setDateEnd      = useEventEdgeStore((s) => s.setDateEnd);
 
-  // Hooks
+  // ── Hooks ────────────────────────────────────────────────────────────────────
   const { run: runEvents, isLoadingEvents } = useEvents();
-  const { run: runMetrics, isLoadingMetrics } = useAnalysis();
+  const {
+    runGlobalMetrics,
+    runConditionedAnalysis,
+    runConditioningCount,
+    conditioningCount,
+    isLoadingGlobal,
+    isLoadingMetrics,
+    isLoadingConditioningCount,
+  } = useAnalysis();
 
-  // Local state
+  // ── Local state ──────────────────────────────────────────────────────────────
   const [symbolDraft, setSymbolDraft] = useState(symbol);
-  const [binsDraft, setBinsDraft] = useState(bins.join(", "));
-  const [periodsDraft, setPeriodsDraft] = useState(periods.join(", "));
-  const [localCond, setLocalCond] = useState<ConditioningParams>(conditioning);
+  const [binsDraft, setBinsDraft]     = useState(bins.join(", "));
+  const [localCond, setLocalCond]     = useState<ConditioningParams>(conditioning);
 
   const symbolError = useMemo(() => {
     if (symbolDraft.length === 0) return "Ingresa un símbolo";
@@ -182,20 +199,10 @@ export function SidebarMenu() {
   );
   const binsError = validateBins(parsedBins);
 
-  const parsedPeriods = useMemo(
-    () => periodsDraft.split(",").map((v) => Number(v.trim())).filter((v) => !Number.isNaN(v)),
-    [periodsDraft],
-  );
-  const periodsError = useMemo(() => {
-    if (parsedPeriods.length === 0) return "Ingresa al menos un período";
-    if (parsedPeriods.some((v) => !Number.isInteger(v) || v < 1)) return "Enteros ≥ 1 separados por coma";
-    return null;
-  }, [parsedPeriods]);
-
-  const conditioned = probabilisticResult?.families[0]?.n_total_events ?? 0;
-  const total = events.length;
-
-  const epsEnabled = eventType === "earnings";
+  const assetClassOptions = ASSET_CLASS_OPTIONS[typeData];
+  const conditioned = conditioningCount?.n_conditioned ?? 0;
+  const total       = conditioningCount?.n_total ?? 0;
+  const epsEnabled  = eventType === "earnings";
 
   function toggleArr<T extends string>(arr: T[] | undefined, v: T): T[] {
     const s = new Set(arr ?? []);
@@ -203,16 +210,16 @@ export function SidebarMenu() {
     return Array.from(s);
   }
 
+  // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <aside className="flex h-full flex-col overflow-y-auto">
       <div className="space-y-2 p-2">
 
-        {/* ── DATA ── */}
+        {/* ══════════════════════════ PASO 1 · DATOS ══════════════════════════ */}
         <Accordion title="Datos" defaultOpen>
 
-          {/* Activo */}
           <div>
-            <label className="label">Símbolo</label>
+            <FieldLabel>Símbolo</FieldLabel>
             <input
               className="input mt-1"
               value={symbolDraft}
@@ -228,76 +235,87 @@ export function SidebarMenu() {
             )}
           </div>
 
-          {/* Tipo de evento */}
           <div>
-            <label className="label">Tipo de evento</label>
+            <FieldLabel>Fuente</FieldLabel>
             <select
               className="input mt-1"
-              value={eventType}
-              onChange={(e) => {
-                setEventType(e.target.value as EventType);
-                clearResults();
-              }}
+              value={source}
+              onChange={(e) => setSource(e.target.value as DataSource)}
             >
-              <option value="earnings">Earnings</option>
-              <option value="gap">Gap</option>
+              {SOURCE_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
             </select>
           </div>
 
-          {eventType === "gap" && (
-            <>
-              <div>
-                <label className="label">Umbral de detección (%)</label>
-                <input
-                  type="number"
-                  className="input mt-1"
-                  min={0.1}
-                  max={20}
-                  step={0.1}
-                  value={Number.isFinite(gapThreshold) ? gapThreshold : 1}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    if (raw === "") {
-                      setGapThreshold(1);
-                      return;
-                    }
-                    setGapThreshold(Number(raw));
-                  }}
-                />
-              </div>
-
-              <div>
-                <label className="label">Incluir earnings days en gaps</label>
-                <select
-                  className="input mt-1"
-                  value={includeEarningsDays === true ? "true" : "none"}
-                  onChange={(e) => {
-                    const v = e.target.value === "true" ? true : null;
-                    setIncludeEarningsDays(v);
-                  }}
-                >
-                  <option value="none">None (excluir earnings days)</option>
-                  <option value="true">True (incluir earnings days)</option>
-                </select>
-              </div>
-            </>
+          {source === "mt5" && (
+            <div>
+              <FieldLabel>Cuenta MT5</FieldLabel>
+              <input
+                className="input mt-1"
+                value={mt5Account}
+                onChange={(e) => setMt5Account(e.target.value)}
+                placeholder="main"
+              />
+              <p className="mt-1 text-xs text-ink-muted">Clave de cuenta en MDH_MT5_ACCOUNTS</p>
+            </div>
           )}
 
-          {/* Rango de fechas */}
+          {typeData === "fundamental" && (
+            <div>
+              <FieldLabel>Fuente OHLCV</FieldLabel>
+              <select
+                className="input mt-1"
+                value={ohlcvSource}
+                onChange={(e) => setOhlcvSource(e.target.value as DataSource)}
+              >
+                {SOURCE_OPTIONS.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-ink-muted">Fuente para precios OHLCV (equity)</p>
+            </div>
+          )}
+
+          <div>
+            <FieldLabel>Tipo de Data</FieldLabel>
+            <select
+              className="input mt-1"
+              value={typeData}
+              onChange={(e) => setTypeData(e.target.value as TypeData)}
+            >
+              {(["ohlcv", "fundamental", "macro"] as TypeData[]).map((t) => (
+                <option key={t} value={t}>{TYPE_DATA_LABEL[t]}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <FieldLabel>Segmento Financiero</FieldLabel>
+            <select
+              className="input mt-1"
+              value={assetClass}
+              onChange={(e) => setAssetClass(e.target.value)}
+            >
+              {assetClassOptions.map((ac) => (
+                <option key={ac} value={ac}>{ac}</option>
+              ))}
+            </select>
+          </div>
+
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="label">Desde</label>
+              <FieldLabel>Desde</FieldLabel>
               <input type="date" className="input mt-1" value={dateStart}
                 onChange={(e) => setDateStart(e.target.value)} />
             </div>
             <div>
-              <label className="label">Hasta</label>
+              <FieldLabel>Hasta</FieldLabel>
               <input type="date" className="input mt-1" value={dateEnd}
                 onChange={(e) => setDateEnd(e.target.value)} />
             </div>
           </div>
 
-          {/* Buscar — al fondo del submenu Data */}
           <button
             type="button"
             className="btn-primary w-full"
@@ -310,15 +328,40 @@ export function SidebarMenu() {
           >
             {isLoadingEvents ? "Buscando..." : "Buscar"}
           </button>
+
+          {events.length > 0 && !isLoadingEvents && (
+            <div className="rounded border border-status-success/30 bg-status-success/8 p-2 text-xs space-y-0.5">
+              <p className="font-semibold text-ink-primary">
+                {symbol}{companyName ? ` · ${companyName}` : ""}
+              </p>
+              <p className="text-ink-muted">{events.length} eventos encontrados</p>
+              <p className="font-mono text-ink-muted">
+                {events[0].date.slice(0, 10)} → {events[events.length - 1].date.slice(0, 10)}
+              </p>
+            </div>
+          )}
+          {error && events.length === 0 && !isLoadingEvents && (
+            <p className="text-xs text-status-error">{error}</p>
+          )}
+
+          {/* ════════════════ PASO 2 · Cálculo de Estadísticas Globales ════════════════ */}
+          <button
+            type="button"
+            className="btn-primary w-full"
+            disabled={Boolean(symbolError) || isLoadingGlobal}
+            onClick={async () => { await runGlobalMetrics(); }}
+          >
+            {isLoadingGlobal ? "Calculando..." : "Calcular Estadisticas Globales"}
+          </button>
         </Accordion>
 
-        {/* ── CONDICIONAMIENTO ── */}
-        <Accordion title="Condicionamiento">
+        {/* ════════════════ PASO 3 · CONFIGURACIÓN DE EVENTOS ════════════════ */}
+        <Accordion title="Configuración de Eventos">
+
           <p className="text-xs text-ink-muted">
             {conditioned} condicionados / {total} totales
           </p>
 
-          {/* A — Tendencia */}
           <Accordion title="A · Tendencia">
             <RangeRow label="EMA5/EMA20 ratio %" min={-20} max={20}
               value={{ min: localCond.ema5_vs_ema20_ratio_min, max: localCond.ema5_vs_ema20_ratio_max }}
@@ -333,7 +376,6 @@ export function SidebarMenu() {
               onToggle={(v) => setLocalCond({ ...localCond, trend_directions: toggleArr(localCond.trend_directions, v) })} />
           </Accordion>
 
-          {/* B — Momentum */}
           <Accordion title="B · Momentum">
             <RangeRow label="Retorno 5 sesiones %" min={-30} max={30}
               value={{ min: localCond.return_5d_min, max: localCond.return_5d_max }}
@@ -346,7 +388,6 @@ export function SidebarMenu() {
               onChange={(r) => setLocalCond(updateRange(localCond, "rsi14_min", "rsi14_max", r))} />
           </Accordion>
 
-          {/* C — Sobreextensión */}
           <Accordion title="C · Sobreextensión">
             <CheckboxGroup<BBPosition>
               label="Posición en BB(20,2)"
@@ -363,7 +404,6 @@ export function SidebarMenu() {
               onToggle={(v) => setLocalCond({ ...localCond, rsi14_zones: toggleArr(localCond.rsi14_zones, v) })} />
           </Accordion>
 
-          {/* D — Volatilidad */}
           <Accordion title="D · Volatilidad">
             <RangeRow label="Vol. histórica 10d (% anual)" min={0} max={200}
               value={{ min: localCond.hist_vol_10d_min, max: localCond.hist_vol_10d_max }}
@@ -381,7 +421,6 @@ export function SidebarMenu() {
               onToggle={(v) => setLocalCond({ ...localCond, vol_regimes: toggleArr(localCond.vol_regimes, v) })} />
           </Accordion>
 
-          {/* E — Fundamental (solo earnings) */}
           {epsEnabled && (
             <Accordion title="E · Fundamental">
               <RangeRow label="EPS surprise %" min={-100} max={100}
@@ -395,7 +434,6 @@ export function SidebarMenu() {
             </Accordion>
           )}
 
-          {/* F — Posicionamiento */}
           <Accordion title="F · Posicionamiento (Gap)">
             <RangeRow label="Gap apertura %" min={-15} max={15}
               value={{ min: localCond.gap_pct_min, max: localCond.gap_pct_max }}
@@ -418,11 +456,10 @@ export function SidebarMenu() {
             </div>
           </Accordion>
 
-          {/* G — Estacionalidad */}
           <Accordion title="G · Estacionalidad">
             <CheckboxGroup<DayOfWeek>
               label="Día de la semana"
-              values={["monday", "tuesday", "wednesday", "thursday", "friday"]}
+              values={["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]}
               selected={localCond.days_of_week ?? []}
               onToggle={(v) => setLocalCond({ ...localCond, days_of_week: toggleArr(localCond.days_of_week, v) })} />
             <CheckboxGroup<Quarter>
@@ -442,18 +479,29 @@ export function SidebarMenu() {
               onToggle={(v) => setLocalCond({ ...localCond, earnings_seasons: toggleArr(localCond.earnings_seasons, v) })} />
           </Accordion>
 
+          <button
+            type="button"
+            className="btn-primary w-full mt-2"
+            disabled={Boolean(symbolError) || isLoadingConditioningCount}
+            onClick={async () => {
+              setConditioning(localCond);
+              await runConditioningCount();
+            }}
+          >
+            {isLoadingConditioningCount ? "Aplicando..." : "Aplicar Condicionamiento"}
+          </button>
+
           <button type="button" className="btn-ghost w-full mt-1"
             onClick={() => { resetConditioning(); setLocalCond({ gap_direction: "any" }); }}>
             Limpiar filtros
           </button>
         </Accordion>
 
-        {/* ── AJUSTE MÉTRICAS ── */}
-        <Accordion title="Ajuste Métricas" defaultOpen>
+        {/* ════════════════ PASO 4 · ANÁLISIS PROBABILÍSTICO ═════════════════ */}
+        <Accordion title="Análisis Probabilístico">
 
-          {/* Modelo */}
           <div>
-            <label className="label">Modelo</label>
+            <FieldLabel>Modelo</FieldLabel>
             <select className="input mt-1" value={model}
               onChange={(e) => setModel(e.target.value as ModelType)}>
               <option value="frequentist">Frequentist</option>
@@ -464,10 +512,9 @@ export function SidebarMenu() {
             <p className="mt-1 text-xs text-ink-muted">{modelDescriptions[model]}</p>
           </div>
 
-          {/* Horizonte */}
           <div>
-            <label className="label">Horizonte (sesiones)</label>
-            <p className="mt-1 text-xs text-ink-muted">0 = intradía del evento (open P0 → close P0)</p>
+            <FieldLabel>Horizonte (sesiones)</FieldLabel>
+            <p className="mt-0.5 text-xs text-ink-muted">0 = intradía del evento</p>
             <div className="mt-2 flex items-center gap-2">
               <input type="range" min={0} max={60} value={nPeriods}
                 onChange={(e) => setNPeriods(Number(e.target.value))}
@@ -478,22 +525,20 @@ export function SidebarMenu() {
             </div>
           </div>
 
-          {/* Bins */}
           <div>
-            <label className="label">Bins de retorno</label>
+            <FieldLabel>Bins de retorno</FieldLabel>
             <p className="mb-1 text-xs text-ink-muted">Ej: -0.05, -0.01, 0.01, 0.05</p>
             <textarea
               className="input min-h-[72px] font-mono text-xs"
               value={binsDraft}
               onChange={(e) => setBinsDraft(e.target.value)}
             />
-            {binsError ? (
-              <p className="mt-1 text-xs text-status-error">{binsError}</p>
-            ) : (
-              <p className="mt-1 text-xs text-ink-muted">
-                {parsedBins.map((v) => `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`).join(" · ")}
-              </p>
-            )}
+            {binsError
+              ? <p className="mt-1 text-xs text-status-error">{binsError}</p>
+              : <p className="mt-1 text-xs text-ink-muted">
+                  {parsedBins.map((v) => `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`).join(" · ")}
+                </p>
+            }
             <div className="mt-2 flex gap-2">
               <button type="button" className="btn-primary flex-1" disabled={Boolean(binsError)}
                 onClick={() => { if (!binsError) setBins(parsedBins); }}>
@@ -506,44 +551,20 @@ export function SidebarMenu() {
             </div>
           </div>
 
-          {/* Períodos de referencia */}
-          <div>
-            <label className="label">Períodos (métricas informativas)</label>
-            <p className="mb-1 text-xs text-ink-muted">Ej: 1, 3, 5, 10</p>
-            <div className="flex gap-2">
-              <input
-                className="input flex-1 font-mono text-xs"
-                value={periodsDraft}
-                onChange={(e) => setPeriodsDraft(e.target.value)}
-              />
-              <button
-                type="button"
-                className="btn-ghost"
-                disabled={Boolean(periodsError)}
-                onClick={() => { if (!periodsError) setPeriods(parsedPeriods); }}
-              >
-                Ok
-              </button>
-            </div>
-            {periodsError
-              ? <p className="mt-1 text-xs text-status-error">{periodsError}</p>
-              : <p className="mt-1 text-xs text-ink-muted">{parsedPeriods.map((v) => `P${v}`).join(" · ")}</p>
-            }
-          </div>
-
-          {/* Calcular métricas — aplica conditioning local antes de correr */}
           <button
             type="button"
             className="btn-primary w-full"
-            disabled={events.length === 0 || isLoadingMetrics}
+            disabled={Boolean(symbolError) || Boolean(binsError) || isLoadingMetrics}
             onClick={async () => {
               setConditioning(localCond);
-              if (!periodsError && parsedPeriods.length > 0) setPeriods(parsedPeriods);
-              await runMetrics();
+              await runConditionedAnalysis();
             }}
           >
-            {isLoadingMetrics ? "Calculando..." : "Calcular métricas"}
+            {isLoadingMetrics ? "Calculando..." : "Calcular Análisis Condicionado"}
           </button>
+          {error && !isLoadingMetrics && probabilisticResult === null && (
+            <p className="mt-1 text-xs text-status-error">{error}</p>
+          )}
         </Accordion>
 
       </div>

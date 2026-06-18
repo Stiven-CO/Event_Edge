@@ -25,7 +25,11 @@ _EARNINGS_COLUMNS = ["eps_actual", "eps_estimate", "revenue_actual", "revenue_es
 
 
 class MdhUnavailableError(Exception):
-    """MDH no está disponible o retornó un error inesperado."""
+    """MDH no está disponible o retornó un error inesperado (5xx / conexión)."""
+
+
+class MdhValidationError(Exception):
+    """MDH rechazó la petición por configuración o validación incorrecta (4xx)."""
 
 
 def _empty_earnings_df() -> pd.DataFrame:
@@ -159,6 +163,7 @@ class MdhClient:
         asset_class: str,
         timeframe: str = "1d",
         type_saved: str = "complete_historical",
+        credentials_account: str | None = None,
     ) -> dict[str, Any]:
         """
         Llama POST /api/v1/data/ingest en MDH.
@@ -171,15 +176,19 @@ class MdhClient:
             {job_id, status, rows_stored, lake_path, ...}
         Lanza MdhUnavailableError si falla la conexión o MDH responde 4xx/5xx.
         """
+        ingest_config: dict[str, Any] = {
+            "symbol": symbol,
+            "asset_class": asset_class,
+            "timeframe": timeframe,
+            "type_data": "ohlcv",
+            "type_saved": type_saved,
+        }
+        if credentials_account is not None:
+            ingest_config["account_key"] = credentials_account
+
         payload: dict[str, Any] = {
             "source": source,
-            "config": {
-                "symbol": symbol,
-                "asset_class": asset_class,
-                "timeframe": timeframe,
-                "type_data": "ohlcv",
-                "type_saved": type_saved,
-            },
+            "config": ingest_config,
         }
 
         try:
@@ -199,9 +208,9 @@ class MdhClient:
                 f"MDH retornó error {response.status_code} al ingestar {symbol}: {response.text[:300]}"
             )
         if response.status_code >= 400:
-            raise MdhUnavailableError(
+            raise MdhValidationError(
                 f"MDH retornó {response.status_code} al ingestar {symbol} "
-                f"(source={source}): {response.text[:300]}"
+                f"(source={source}): {response.text[:400]}"
             )
 
         return response.json()

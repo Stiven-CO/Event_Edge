@@ -3,15 +3,39 @@ import { useCallback } from "react";
 import { useEventEdgeStore } from "@/store/eventEdgeStore";
 
 export function useAnalysis() {
-  const fetchMetrics = useEventEdgeStore((s) => s.fetchMetrics);
-  const isLoadingMetrics = useEventEdgeStore((s) => s.isLoadingMetrics);
-  const informativeMetrics = useEventEdgeStore((s) => s.informativeMetrics);
-  const probabilisticResult = useEventEdgeStore((s) => s.probabilisticResult);
-  const error = useEventEdgeStore((s) => s.error);
+  const fetchGlobalMetrics       = useEventEdgeStore((s) => s.fetchGlobalMetrics);
+  const fetchConditionedAnalysis = useEventEdgeStore((s) => s.fetchConditionedAnalysis);
+  const fetchConditioningCount   = useEventEdgeStore((s) => s.fetchConditioningCount);
+  const isLoadingGlobal          = useEventEdgeStore((s) => s.isLoadingGlobal);
+  const isLoadingMetrics         = useEventEdgeStore((s) => s.isLoadingMetrics);
+  const isLoadingConditioningCount = useEventEdgeStore((s) => s.isLoadingConditioningCount);
+  const globalMetrics            = useEventEdgeStore((s) => s.globalMetrics);
+  const probabilisticResult      = useEventEdgeStore((s) => s.probabilisticResult);
+  const conditioningCount        = useEventEdgeStore((s) => s.conditioningCount);
+  const error                    = useEventEdgeStore((s) => s.error);
 
-  const run = useCallback(async () => {
-    await fetchMetrics();
-  }, [fetchMetrics]);
+  const runGlobalMetrics = useCallback(async () => {
+    await fetchGlobalMetrics();
+  }, [fetchGlobalMetrics]);
 
-  return { run, informativeMetrics, probabilisticResult, isLoadingMetrics, error };
+  const runConditionedAnalysis = useCallback(async () => {
+    await fetchConditionedAnalysis();
+  }, [fetchConditionedAnalysis]);
+
+  const runConditioningCount = useCallback(async () => {
+    await fetchConditioningCount();
+  }, [fetchConditioningCount]);
+
+  return {
+    runGlobalMetrics,
+    runConditionedAnalysis,
+    runConditioningCount,
+    globalMetrics,
+    probabilisticResult,
+    conditioningCount,
+    isLoadingGlobal,
+    isLoadingMetrics,
+    isLoadingConditioningCount,
+    error,
+  };
 }

@@ -4,14 +4,37 @@ import { endpoints } from "@/api/endpoints";
 import type {
   AnalysisRequest,
   BrokerStatus,
+  ConditioningCountResult,
   ConditioningParams,
   EventRecord,
   EventType,
-  InformativeMetrics,
+  GlobalInformativeMetrics,
   ModelType,
   PriceActionResult,
   ProbabilisticResult,
 } from "@/api/types";
+
+// ---------------------------------------------------------------------------
+// Lake parameter types
+// ---------------------------------------------------------------------------
+
+export type TypeData  = "ohlcv" | "fundamental" | "macro";
+export type TypeSaved = "complete_historical" | "specific_event";
+
+export const ASSET_CLASS_OPTIONS: Record<TypeData, string[]> = {
+  ohlcv:       ["equity", "forex", "crypto", "indices", "commodities"],
+  fundamental: ["earnings"],
+  macro:       ["economics"],
+};
+
+export const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1mo"] as const;
+
+export const SOURCE_OPTIONS = ["yfinance", "mt5", "alpha_vantage"] as const;
+export type DataSource = typeof SOURCE_OPTIONS[number];
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
 
 function _normalizeConditioning(conditioning: ConditioningParams): ConditioningParams {
   return {
@@ -27,133 +50,151 @@ function _normalizeConditioning(conditioning: ConditioningParams): ConditioningP
   };
 }
 
-export type DataSource = "yfinance" | "mt5" | "tws";
+// ---------------------------------------------------------------------------
+// Store interface
+// ---------------------------------------------------------------------------
 
 interface EventEdgeState {
+  // ── Query params ──────────────────────────────────────────────────────────
   symbol: string;
   companyName: string;
+  source: DataSource;
+  mt5Account: string;
+  ohlcvSource: DataSource;
+  typeData: TypeData;
+  assetClass: string;
+  timeframe: string;
+  typeSaved: TypeSaved;
+  // ── Analysis params ───────────────────────────────────────────────────────
   eventType: EventType;
   model: ModelType;
   nPeriods: number;
   gapThreshold: number;
   includeEarningsDays: boolean | null;
   bins: number[];
-  periods: number[];
   conditioning: ConditioningParams;
   dateStart: string;
   dateEnd: string;
-  dataSource: DataSource;
-
+  // ── Results ───────────────────────────────────────────────────────────────
   events: EventRecord[];
-  informativeMetrics: InformativeMetrics | null;
+  globalMetrics: GlobalInformativeMetrics | null;
   probabilisticResult: ProbabilisticResult | null;
   priceActionResult: PriceActionResult | null;
   brokerStatuses: BrokerStatus[];
-
+  conditioningCount: ConditioningCountResult | null;
+  // ── Loading / error ───────────────────────────────────────────────────────
   isLoadingEvents: boolean;
+  isLoadingGlobal: boolean;
   isLoadingMetrics: boolean;
   isLoadingBrokerStatus: boolean;
   isLoadingPriceAction: boolean;
+  isLoadingConditioningCount: boolean;
   error: string | null;
   infoMessage: string | null;
-
+  // ── Setters ───────────────────────────────────────────────────────────────
   setSymbol: (s: string) => void;
+  setSource: (s: DataSource) => void;
+  setMt5Account: (k: string) => void;
+  setOhlcvSource: (s: DataSource) => void;
+  setTypeData: (t: TypeData) => void;
+  setAssetClass: (c: string) => void;
+  setTimeframe: (f: string) => void;
+  setTypeSaved: (s: TypeSaved) => void;
   setEventType: (t: EventType) => void;
   setModel: (m: ModelType) => void;
   setNPeriods: (n: number) => void;
   setGapThreshold: (t: number) => void;
   setIncludeEarningsDays: (v: boolean | null) => void;
   setBins: (b: number[]) => void;
-  setPeriods: (p: number[]) => void;
   setConditioning: (c: ConditioningParams) => void;
   resetConditioning: () => void;
   clearResults: () => void;
   setDateStart: (d: string) => void;
   setDateEnd: (d: string) => void;
-  setDataSource: (s: DataSource) => void;
-
+  // ── Actions ───────────────────────────────────────────────────────────────
   fetchBrokerStatus: () => Promise<void>;
   fetchEvents: () => Promise<void>;
-  fetchMetrics: () => Promise<void>;
+  fetchGlobalMetrics: () => Promise<void>;
+  fetchConditionedAnalysis: () => Promise<void>;
   fetchPriceAction: () => Promise<void>;
+  fetchConditioningCount: () => Promise<void>;
 }
 
-const defaultConditioning: ConditioningParams = {
-  gap_direction: "any",
-};
+// ---------------------------------------------------------------------------
+// Defaults
+// ---------------------------------------------------------------------------
 
-const sourceLabel: Record<DataSource, string> = {
-  yfinance: "YFinance",
-  mt5: "MT5",
-  tws: "TWS",
-};
+const defaultConditioning: ConditioningParams = { gap_direction: "any" };
 
-function fallbackMessage(
-  selectedSource: DataSource,
-  usedSource: string | null | undefined,
-  detail?: string | null,
-): string | null {
-  if ((selectedSource === "mt5" || selectedSource === "tws") && usedSource === "yfinance") {
-    return detail ?? `No fue posible usar ${sourceLabel[selectedSource]}. Se usó YFinance como respaldo.`;
-  }
-  return null;
-}
-
-function unavailableMessage(selectedSource: DataSource, statuses: BrokerStatus[]): string | null {
-  if (selectedSource !== "mt5" && selectedSource !== "tws") {
-    return null;
-  }
-
-  const selected = statuses.find((s) => s.source === selectedSource);
-  if (selected && !selected.alive) {
-    return `${sourceLabel[selectedSource]} no está disponible en este momento. Se intentará usar YFinance como respaldo.`;
-  }
-  return null;
-}
+// ---------------------------------------------------------------------------
+// Store
+// ---------------------------------------------------------------------------
 
 export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
+  // ── Query params ──────────────────────────────────────────────────────────
   symbol: "AAPL",
   companyName: "",
+  source: "yfinance",
+  mt5Account: "darwinex_XKLN",
+  ohlcvSource: "yfinance",
+  typeData: "ohlcv",
+  assetClass: "equity",
+  timeframe: "1d",
+  typeSaved: "complete_historical",
+  // ── Analysis params ───────────────────────────────────────────────────────
   eventType: "earnings",
   model: "bootstrap",
   nPeriods: 5,
   gapThreshold: 1.0,
   includeEarningsDays: null,
   bins: [-0.05, -0.01, 0.01, 0.05],
-  periods: [1, 3, 5, 10],
   conditioning: defaultConditioning,
   dateStart: "",
   dateEnd: "",
-  dataSource: "yfinance",
-
+  // ── Results ───────────────────────────────────────────────────────────────
   events: [],
-  informativeMetrics: null,
+  globalMetrics: null,
   probabilisticResult: null,
   priceActionResult: null,
   brokerStatuses: [],
-
+  conditioningCount: null,
+  // ── Loading / error ───────────────────────────────────────────────────────
   isLoadingEvents: false,
+  isLoadingGlobal: false,
   isLoadingMetrics: false,
   isLoadingBrokerStatus: false,
   isLoadingPriceAction: false,
+  isLoadingConditioningCount: false,
   error: null,
   infoMessage: null,
 
+  // ── Setters ───────────────────────────────────────────────────────────────
   setSymbol: (symbol) => set({ symbol, error: null, infoMessage: null }),
-  setEventType: (eventType) => set({ eventType, informativeMetrics: null, probabilisticResult: null, error: null, infoMessage: null }),
+  setSource: (source) => set({ source, events: [], globalMetrics: null, probabilisticResult: null, conditioningCount: null }),
+  setMt5Account: (mt5Account) => set({ mt5Account }),
+  setOhlcvSource: (ohlcvSource) => set({ ohlcvSource }),
+  setTypeData: (typeData) => {
+    const firstClass = ASSET_CLASS_OPTIONS[typeData][0];
+    const autoEventType = typeData === "fundamental" ? ("earnings" as EventType) : get().eventType;
+    set({ typeData, assetClass: firstClass, eventType: autoEventType,
+          events: [], globalMetrics: null, probabilisticResult: null });
+  },
+  setAssetClass: (assetClass) => set({ assetClass }),
+  setTimeframe: (timeframe) => set({ timeframe }),
+  setTypeSaved: (typeSaved) => set({ typeSaved }),
+  setEventType: (eventType) => set({ eventType, globalMetrics: null, probabilisticResult: null, error: null, infoMessage: null }),
   setModel: (model) => set({ model }),
   setNPeriods: (nPeriods) => set({ nPeriods: Math.max(0, Math.min(60, Math.trunc(nPeriods))) }),
   setGapThreshold: (gapThreshold) => set({ gapThreshold: Math.max(0.1, Math.min(20, Number.isFinite(gapThreshold) ? gapThreshold : 1.0)) }),
   setIncludeEarningsDays: (includeEarningsDays) => set({ includeEarningsDays }),
   setBins: (bins) => set({ bins }),
-  setPeriods: (periods) => set({ periods }),
   setConditioning: (conditioning) => set({ conditioning }),
   resetConditioning: () => set({ conditioning: defaultConditioning }),
-  clearResults: () => set({ events: [], informativeMetrics: null, probabilisticResult: null, priceActionResult: null, error: null }),
+  clearResults: () => set({ events: [], globalMetrics: null, probabilisticResult: null, priceActionResult: null, conditioningCount: null, error: null }),
   setDateStart: (dateStart) => set({ dateStart }),
   setDateEnd: (dateEnd) => set({ dateEnd }),
-  setDataSource: (dataSource) => set({ dataSource, infoMessage: null }),
 
+  // ── Actions ───────────────────────────────────────────────────────────────
   fetchBrokerStatus: async () => {
     set({ isLoadingBrokerStatus: true });
     try {
@@ -165,33 +206,30 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   },
 
   fetchEvents: async () => {
-    const { symbol, eventType, dateStart, dateEnd, gapThreshold, includeEarningsDays } = get();
+    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, dateStart, dateEnd, gapThreshold, includeEarningsDays, assetClass } = get();
     set({ isLoadingEvents: true, error: null, infoMessage: null });
     try {
-      const { dataSource, brokerStatuses } = get();
       const [events, assetInfo] = await Promise.allSettled([
         endpoints.detectEvents({
           symbol,
-          source: dataSource,
-          asset_class: "equity",
+          source,
+          asset_class: assetClass,
+          ...(typeData === "fundamental" ? { ohlcv_source: ohlcvSource } : {}),
           event_type: eventType,
           gap_threshold_pct: gapThreshold,
           include_earnings_days: eventType === "gap" ? includeEarningsDays : null,
           ...(dateStart ? { date_range_start: dateStart } : {}),
           ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
+          ...(source === "mt5" ? { credentials_account: mt5Account } : {}),
         }),
         endpoints.getAssetInfo(symbol),
       ]);
-      const resolvedEvents = events.status === "fulfilled" ? events.value : [];
-      const companyName =
-        assetInfo.status === "fulfilled" ? (assetInfo.value.short_name || "") : "";
       set({
-        events: resolvedEvents,
-        companyName,
+        events:      events.status === "fulfilled" ? events.value : [],
+        companyName: assetInfo.status === "fulfilled" ? (assetInfo.value.short_name || "") : "",
         isLoadingEvents: false,
-        informativeMetrics: null,
+        globalMetrics: null,
         probabilisticResult: null,
-        infoMessage: unavailableMessage(dataSource, brokerStatuses),
       });
     } catch (error) {
       set({
@@ -201,78 +239,105 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
     }
   },
 
-  fetchMetrics: async () => {
-    const { symbol, eventType, model, nPeriods, gapThreshold, includeEarningsDays, bins, conditioning, periods, dateStart, dateEnd, dataSource } = get();
-    set({ isLoadingMetrics: true, error: null, infoMessage: null });
-
+  fetchGlobalMetrics: async () => {
+    const { symbol, source, ohlcvSource, typeData, assetClass } = get();
+    set({ isLoadingGlobal: true, error: null, infoMessage: null });
     try {
-      const informativePromise = endpoints.getInformativeMetrics({
+      const globalMetrics = await endpoints.getGlobalMetrics({
         symbol,
-        source: dataSource,
-        asset_class: "equity",
-        event_type: eventType,
-        gap_threshold_pct: gapThreshold,
-        include_earnings_days: eventType === "gap" ? includeEarningsDays : null,
-        periods,
+        source,
+        asset_class: assetClass,
+        ...(typeData === "fundamental" ? { ohlcv_source: ohlcvSource } : {}),
       });
+      set({ globalMetrics, isLoadingGlobal: false });
+    } catch (error) {
+      set({
+        isLoadingGlobal: false,
+        error: error instanceof Error ? error.message : "No se pudo calcular línea base",
+      });
+    }
+  },
 
-      const probabilisticBody: AnalysisRequest = {
+  fetchConditionedAnalysis: async () => {
+    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, model, nPeriods, gapThreshold, includeEarningsDays, bins, conditioning, dateStart, dateEnd, assetClass } = get();
+    set({ isLoadingMetrics: true, error: null, infoMessage: null });
+    // Path OHLCV-all-bars cuando typeData !== "fundamental"; path earnings solo en fundamental
+    const resolvedEventType = typeData === "fundamental" ? eventType : null;
+    try {
+      const body: AnalysisRequest = {
         symbol,
-        source: dataSource,
-        asset_class: "equity",
-        event_type: eventType,
+        source,
+        asset_class: assetClass,
+        ...(typeData === "fundamental" ? { ohlcv_source: ohlcvSource } : {}),
+        event_type: resolvedEventType,
         model,
         n_periods: nPeriods,
         bins,
         gap_threshold_pct: gapThreshold,
-        include_earnings_days: eventType === "gap" ? includeEarningsDays : null,
+        include_earnings_days: resolvedEventType === "gap" ? includeEarningsDays : null,
         conditioning: _normalizeConditioning(conditioning),
         ...(dateStart ? { date_range_start: dateStart } : {}),
         ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
+        ...(source === "mt5" ? { credentials_account: mt5Account } : {}),
       };
-      const probabilisticPromise = endpoints.getProbabilisticMetrics(probabilisticBody);
-
-      const [informativeMetrics, probabilisticResult] = await Promise.all([
-        informativePromise,
-        probabilisticPromise,
-      ]);
-
-      set({
-        informativeMetrics,
-        probabilisticResult,
-        isLoadingMetrics: false,
-        infoMessage: fallbackMessage(dataSource, informativeMetrics.data_source, informativeMetrics.data_source_detail),
-      });
+      const probabilisticResult = await endpoints.getProbabilisticMetrics(body);
+      set({ probabilisticResult, isLoadingMetrics: false });
     } catch (error) {
       set({
         isLoadingMetrics: false,
-        error: error instanceof Error ? error.message : "No se pudo calcular métricas",
+        error: error instanceof Error ? error.message : "No se pudo calcular análisis condicionado",
+      });
+    }
+  },
+
+  fetchConditioningCount: async () => {
+    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, gapThreshold, includeEarningsDays, conditioning, dateStart, dateEnd, assetClass } = get();
+    set({ isLoadingConditioningCount: true, error: null });
+    const resolvedEventType = typeData === "fundamental" ? eventType : null;
+    try {
+      const result = await endpoints.getConditioningCount({
+        symbol,
+        source,
+        asset_class: assetClass,
+        ...(typeData === "fundamental" ? { ohlcv_source: ohlcvSource } : {}),
+        event_type: resolvedEventType,
+        gap_threshold_pct: gapThreshold,
+        include_earnings_days: resolvedEventType === "gap" ? includeEarningsDays : null,
+        conditioning: _normalizeConditioning(conditioning),
+        ...(dateStart ? { date_range_start: dateStart } : {}),
+        ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
+        ...(source === "mt5" ? { credentials_account: mt5Account } : {}),
+      });
+      set({ conditioningCount: result, isLoadingConditioningCount: false });
+    } catch (error) {
+      set({
+        isLoadingConditioningCount: false,
+        error: error instanceof Error ? error.message : "No se pudo calcular condicionamiento",
       });
     }
   },
 
   fetchPriceAction: async () => {
-    const { symbol, eventType, nPeriods, conditioning, gapThreshold, includeEarningsDays, dateStart, dateEnd, dataSource, brokerStatuses } = get();
+    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, nPeriods, conditioning, gapThreshold, includeEarningsDays, dateStart, dateEnd, assetClass } = get();
     set({ isLoadingPriceAction: true, infoMessage: null });
+    const resolvedEventType = typeData === "fundamental" ? eventType : null;
     try {
       const result = await endpoints.getPriceAction({
         symbol,
-        source: dataSource,
-        asset_class: "equity",
-        event_type: eventType,
+        source,
+        asset_class: assetClass,
+        ...(typeData === "fundamental" ? { ohlcv_source: ohlcvSource } : {}),
+        event_type: resolvedEventType,
         gap_threshold_pct: gapThreshold,
-        include_earnings_days: eventType === "gap" ? includeEarningsDays : null,
+        include_earnings_days: resolvedEventType === "gap" ? includeEarningsDays : null,
         n_periods: nPeriods,
         include_bands: true,
         conditioning: _normalizeConditioning(conditioning),
         ...(dateStart ? { date_range_start: dateStart } : {}),
-        ...(dateEnd ? { date_range_end: dateEnd } : {}),
+        ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
+        ...(source === "mt5" ? { credentials_account: mt5Account } : {}),
       });
-      set({
-        priceActionResult: result,
-        isLoadingPriceAction: false,
-        infoMessage: unavailableMessage(dataSource, brokerStatuses),
-      });
+      set({ priceActionResult: result, isLoadingPriceAction: false });
     } catch (error) {
       set({
         isLoadingPriceAction: false,

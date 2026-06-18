@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.api.schemas import DetectEventsRequest, EventRecord, EventType
 from backend.config import Settings, get_settings
 from backend.core.event_detector import EventDetector
-from backend.data import MdhClient, MdhUnavailableError
+from backend.data import MdhClient, MdhUnavailableError, MdhValidationError
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
 
@@ -77,22 +77,27 @@ async def _load_ohlcv(
 ) -> pd.DataFrame:
     """
     Carga OHLCV via MDH. Dispara ingesta si el dataset no existe.
+    Cuando req.ohlcv_source está presente (modo fundamental), lo usa como fuente
+    y fuerza asset_class="equity" para el path OHLCV correcto.
     Lanza HTTPException 503 si MDH no está disponible.
     """
-    resolved_source = (req.source or "yfinance").lower()
+    resolved_source = (req.ohlcv_source or req.source or "yfinance").lower()
+    resolved_asset_class = "equity" if req.ohlcv_source else req.asset_class
 
     # 1. Consultar lake
     try:
         df = await mdh_client.query_ohlcv(
             symbol=req.symbol,
             source=resolved_source,
-            asset_class=req.asset_class,
+            asset_class=resolved_asset_class,
             timeframe="1d",
             start=req.date_range_start,
             end=req.date_range_end,
         )
         if not df.empty:
             return df
+    except MdhValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except MdhUnavailableError as exc:
         raise HTTPException(status_code=503, detail=f"MDH no disponible: {exc}")
 
@@ -101,10 +106,13 @@ async def _load_ohlcv(
         await mdh_client.trigger_ingest(
             symbol=req.symbol,
             source=resolved_source,
-            asset_class=req.asset_class,
+            asset_class=resolved_asset_class,
             timeframe="1d",
             type_saved="complete_historical",
+            credentials_account=req.credentials_account,
         )
+    except MdhValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except MdhUnavailableError as exc:
         raise HTTPException(
             status_code=503,
@@ -116,11 +124,13 @@ async def _load_ohlcv(
         return await mdh_client.query_ohlcv(
             symbol=req.symbol,
             source=resolved_source,
-            asset_class=req.asset_class,
+            asset_class=resolved_asset_class,
             timeframe="1d",
             start=req.date_range_start,
             end=req.date_range_end,
         )
+    except MdhValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except MdhUnavailableError as exc:
         raise HTTPException(
             status_code=503,

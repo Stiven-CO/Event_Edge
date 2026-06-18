@@ -9,7 +9,8 @@ from backend.config import Settings, get_settings
 from backend.core.event_detector import EventDetector
 from backend.core.feature_builder import FeatureBuilder
 from backend.core.price_action import compute_price_action
-from backend.data import MdhClient, MdhUnavailableError
+from backend.core.price_action.builder import _to_utc
+from backend.data import MdhClient, MdhUnavailableError, MdhValidationError
 
 router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
 
@@ -34,7 +35,6 @@ async def price_action_analysis(
     settings: Settings = Depends(get_settings),
     mdh_client: MdhClient = Depends(get_mdh_client),
 ) -> PriceActionResult:
-    detector = EventDetector()
     feature_builder = FeatureBuilder()
 
     try:
@@ -46,6 +46,8 @@ async def price_action_analysis(
             mdh_client=mdh_client,
             date_start=req.date_range_start,
             date_end=req.date_range_end,
+            ohlcv_source=req.ohlcv_source,
+            credentials_account=req.credentials_account,
         )
         if ohlcv_daily.empty:
             raise HTTPException(
@@ -53,39 +55,31 @@ async def price_action_analysis(
                 detail=f"No OHLCV data available for {req.symbol}",
             )
 
-        # 2. Earnings dates vía MDH — graceful degradation si no disponibles
-        try:
-            earnings_df = await mdh_client.fetch_earnings_dates(req.symbol)
-        except MdhUnavailableError as exc:
-            if req.event_type == EventType.earnings:
+        # 2. Bifurcación: path earnings (fundamental) vs OHLCV-all-bars
+        is_fundamental = (req.event_type == EventType.earnings)
+
+        if is_fundamental:
+            detector = EventDetector()
+            try:
+                earnings_df = await mdh_client.fetch_earnings_dates(req.symbol)
+            except MdhUnavailableError as exc:
                 raise HTTPException(
                     status_code=503,
                     detail=f"MDH no disponible para earnings dates de {req.symbol}: {exc}",
                 )
-            earnings_df = _empty_earnings_df()
-
-        # 3. Detectar y condicionar eventos
-        if req.event_type == EventType.earnings:
             events = detector.detect_earnings(ohlcv_daily, earnings_df)
+            events = [e.model_copy(update={"symbol": req.symbol}) for e in events]
+            features_df = feature_builder.build(ohlcv_daily, events)
         else:
-            earnings_dates = None
-            if req.include_earnings_days is not True:
-                earnings_dates = earnings_df.index.to_pydatetime().tolist()
-            events = detector.detect_gaps(
-                ohlcv_daily,
-                threshold_pct=req.gap_threshold_pct,
-                earnings_dates=earnings_dates,
-            )
-        events = [e.model_copy(update={"symbol": req.symbol}) for e in events]
+            features_df = feature_builder.build_all_bars(ohlcv_daily, symbol=req.symbol)
 
-        features_df = feature_builder.build(ohlcv_daily, events)
         conditioned_df = apply_conditioning(features_df, req.conditioning)
 
-        # 4. Si horizonte intraday, cargar 30min solo para días de eventos condicionados
+        # 3. Si horizonte intraday (n_periods=0), cargar 30min para barras condicionadas
         ohlcv_intraday: pd.DataFrame | None = None
         if req.n_periods == 0 and not conditioned_df.empty:
             event_dates = sorted(set(
-                pd.Timestamp(row["date"]).tz_convert("UTC").date()
+                _to_utc(row["date"]).date()
                 for _, row in conditioned_df.iterrows()
             ))
             ohlcv_intraday = await _load_ohlcv_intraday(
@@ -96,7 +90,7 @@ async def price_action_analysis(
                 event_dates=event_dates,
             )
 
-        # 5. Calcular price action
+        # 4. Calcular price action
         return compute_price_action(
             events_df=conditioned_df,
             ohlcv_daily_df=ohlcv_daily,
@@ -120,25 +114,32 @@ async def _load_ohlcv_daily(
     mdh_client: MdhClient,
     date_start: pd.Timestamp | None = None,
     date_end: pd.Timestamp | None = None,
+    ohlcv_source: str | None = None,
+    credentials_account: str | None = None,
 ) -> pd.DataFrame:
     """
     Carga OHLCV diario vía MDH. Dispara ingesta si el dataset no existe.
+    Cuando ohlcv_source está presente (modo fundamental), lo usa como fuente
+    y fuerza asset_class="equity" para el path OHLCV correcto.
     Lanza HTTPException 503 si MDH no está disponible.
     """
-    resolved_source = (source or "yfinance").lower()
+    resolved_source = (ohlcv_source or source or "yfinance").lower()
+    resolved_asset_class = "equity" if ohlcv_source else asset_class
 
     # 1. Consultar lake
     try:
         df = await mdh_client.query_ohlcv(
             symbol=symbol,
             source=resolved_source,
-            asset_class=asset_class,
+            asset_class=resolved_asset_class,
             timeframe="1d",
             start=date_start,
             end=date_end,
         )
         if not df.empty:
             return df
+    except MdhValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except MdhUnavailableError as exc:
         raise HTTPException(status_code=503, detail=f"MDH no disponible: {exc}")
 
@@ -147,10 +148,13 @@ async def _load_ohlcv_daily(
         await mdh_client.trigger_ingest(
             symbol=symbol,
             source=resolved_source,
-            asset_class=asset_class,
+            asset_class=resolved_asset_class,
             timeframe="1d",
             type_saved="complete_historical",
+            credentials_account=credentials_account,
         )
+    except MdhValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except MdhUnavailableError as exc:
         raise HTTPException(
             status_code=503,
@@ -162,11 +166,13 @@ async def _load_ohlcv_daily(
         return await mdh_client.query_ohlcv(
             symbol=symbol,
             source=resolved_source,
-            asset_class=asset_class,
+            asset_class=resolved_asset_class,
             timeframe="1d",
             start=date_start,
             end=date_end,
         )
+    except MdhValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except MdhUnavailableError as exc:
         raise HTTPException(
             status_code=503,

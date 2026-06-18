@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 MIN_EVENTS_PLOT = 5
 
 
+def _to_utc(v) -> pd.Timestamp:
+    ts = pd.Timestamp(v)
+    return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+
 # ---------------------------------------------------------------------------
 # Función principal
 # ---------------------------------------------------------------------------
@@ -66,6 +71,7 @@ def _build_intraday(
     include_bands: bool,
 ) -> PriceActionResult:
     daily_idx = ohlcv_daily.sort_index()
+    daily_by_date_intraday = {ts.normalize(): ts for ts in daily_idx.index}
 
     # Construir índice de fechas disponibles en 30min
     if ohlcv_30min.empty:
@@ -82,22 +88,23 @@ def _build_intraday(
     n_omitted = 0
 
     for _, row in events_df.iterrows():
-        event_ts = pd.Timestamp(row["date"]).tz_convert("UTC")
+        event_ts = _to_utc(row["date"])
         event_date_str = str(event_ts.normalize().date())
 
-        # Verificar datos diarios para referencia
-        if event_ts not in daily_idx.index:
+        # Verificar datos diarios para referencia (lookup por fecha normalizada)
+        daily_key = daily_by_date_intraday.get(event_ts.normalize())
+        if daily_key is None:
             n_omitted += 1
             continue
 
         # Referencia: open diario de P0
-        ref = float(daily_idx.loc[event_ts, "open"])
+        ref = float(daily_idx.loc[daily_key, "open"])
         if math.isnan(ref) or ref == 0:
             n_omitted += 1
             continue
 
         # Clasificar win/loss con datos diarios
-        close_p0 = float(daily_idx.loc[event_ts, "close"])
+        close_p0 = float(daily_idx.loc[daily_key, "close"])
         is_win = (close_p0 - ref) / ref > 0
 
         # Verificar disponibilidad de datos intradía
@@ -160,15 +167,15 @@ def _build_daily(
     include_bands: bool,
 ) -> PriceActionResult:
     daily = ohlcv_daily.sort_index()
-    daily_positions = {ts: i for i, ts in enumerate(daily.index)}
+    daily_by_date = {ts.normalize(): i for i, ts in enumerate(daily.index)}
 
     all_series: list[list[float]] = []
     win_series: list[list[float]] = []
     loss_series: list[list[float]] = []
 
     for _, row in events_df.iterrows():
-        event_ts = pd.Timestamp(row["date"]).tz_convert("UTC")
-        pos = daily_positions.get(event_ts)
+        event_ts = _to_utc(row["date"])
+        pos = daily_by_date.get(event_ts.normalize())
         if pos is None:
             continue
 
@@ -272,7 +279,7 @@ def _intraday_labels(
         return [str(i) for i in range(n_bars)]
 
     for _, row in events_df.iterrows():
-        event_ts = pd.Timestamp(row["date"]).tz_convert("UTC")
+        event_ts = _to_utc(row["date"])
         bars = ohlcv_30min[
             ohlcv_30min.index.normalize().tz_convert("UTC") == event_ts.normalize()
         ].sort_index()

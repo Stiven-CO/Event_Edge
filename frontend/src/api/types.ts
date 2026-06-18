@@ -5,7 +5,7 @@ export type BBPosition = "below_lower" | "in_lower" | "middle" | "in_upper" | "a
 export type TrendDirection = "bullish" | "sideways" | "bearish";
 export type RSIZone = "oversold" | "neutral" | "overbought";
 export type VolRegime = "low" | "normal" | "high";
-export type DayOfWeek = "monday" | "tuesday" | "wednesday" | "thursday" | "friday";
+export type DayOfWeek = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
 export type MonthOfYear = "jan" | "feb" | "mar" | "apr" | "may" | "jun" | "jul" | "aug" | "sep" | "oct" | "nov" | "dec";
 export type Quarter = "q1" | "q2" | "q3" | "q4";
 export type EarningsSeason = "peak" | "off_season";
@@ -65,12 +65,32 @@ export interface ProbabilisticFamily {
   scenarios: ScenarioBin[];
 }
 
+export interface ConditionedSummary {
+  n_conditioned_events: number;
+  n_total_events: number;
+  filter_rate: number;
+  frequency_per_year: number;
+  frequency_per_quarter: number;
+  gap_mean: number | null;
+  gap_std: number | null;
+  event_day_range_mean: number | null;
+  event_day_range_std: number | null;
+  event_day_volume_mean: number | null;
+  event_day_volume_std: number | null;
+  event_day_return_mean: number | null;
+  event_day_return_std: number | null;
+  avg_forward_return: Record<number, { mean: number; std: number }>;
+  return_samples_close: number[];
+  return_samples_gap: number[];
+}
+
 export interface ProbabilisticResult {
   symbol: string;
   model: ModelType;
   data_source: string;
   data_source_detail?: string | null;
   families: ProbabilisticFamily[];
+  conditioned_summary?: ConditionedSummary | null;
 }
 
 export interface InformativeMetrics {
@@ -142,11 +162,13 @@ export interface DetectEventsRequest {
   symbol: string;
   source?: string;
   asset_class?: string;
+  ohlcv_source?: string;
   event_type: EventType;
   gap_threshold_pct: number;
   include_earnings_days?: boolean | null;
   date_range_start?: string;
   date_range_end?: string;
+  credentials_account?: string;
 }
 
 export interface InformativeRequest {
@@ -159,11 +181,63 @@ export interface InformativeRequest {
   periods?: number[];
 }
 
+// ---------------------------------------------------------------------------
+// Global Informative Metrics — Phase 1 (sin eventos)
+// ---------------------------------------------------------------------------
+
+export interface GlobalInformativeRequest {
+  symbol: string;
+  source?: string;
+  asset_class?: string;
+  ohlcv_source?: string;
+}
+
+export interface ReturnHistogram {
+  edges: number[];    // len = n_bins + 1
+  counts: number[];   // len = n_bins
+}
+
+export interface QQPlotData {
+  theoretical: number[];
+  sample: number[];
+}
+
+export interface RollingVolPoint {
+  date: string;   // "YYYY-MM-DD"
+  vol: number;    // volatilidad anualizada (fracción, ej. 0.25 = 25%)
+}
+
+export interface GlobalInformativeMetrics {
+  symbol: string;
+  data_source: string;
+  data_source_detail?: string | null;
+  n_observations: number;
+  date_start: string;
+  date_end: string;
+  return_histogram: ReturnHistogram;
+  qqplot_data: QQPlotData;
+  return_mean: number;
+  return_median: number;
+  return_std: number;
+  return_skewness: number;
+  return_kurtosis: number;
+  return_min: number;
+  return_max: number;
+  annualized_vol: number;
+  atr_mean: number;
+  rolling_vol_30d: RollingVolPoint[];
+  hurst_exponent: number | null;
+  autocorr_lag1: number;
+  autocorr_lag5: number;
+  autocorr_lag10: number;
+}
+
 export interface AnalysisRequest {
   symbol: string;
   source: string;
   asset_class: string;
-  event_type: EventType;
+  ohlcv_source?: string;
+  event_type: EventType | null;  // null → path OHLCV-all-bars
   gap_threshold_pct: number;
   include_earnings_days?: boolean | null;
   n_periods: number;
@@ -172,6 +246,7 @@ export interface AnalysisRequest {
   conditioning: ConditioningParams;
   date_range_start?: string;
   date_range_end?: string;
+  credentials_account?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,10 +282,42 @@ export interface PriceActionRequest {
   symbol: string;
   source?: string;
   asset_class?: string;
-  event_type: EventType;
+  ohlcv_source?: string;
+  event_type: EventType | null;  // null → path OHLCV-all-bars
   gap_threshold_pct: number;
   include_earnings_days?: boolean | null;
   n_periods: number;
   include_bands: boolean;
   conditioning: ConditioningParams;
+  credentials_account?: string;
+}
+
+export interface ConditionedBar {
+  date: string;
+  gap_pct: number | null;
+  trend_direction: string | null;
+  rsi14: number | null;
+  day_of_week: string | null;
+  return_5d: number | null;
+  vol_regime: string | null;
+}
+
+export interface ConditioningCountRequest {
+  symbol: string;
+  source?: string;
+  asset_class?: string;
+  ohlcv_source?: string;
+  event_type?: EventType | null;
+  gap_threshold_pct?: number;
+  include_earnings_days?: boolean | null;
+  conditioning: ConditioningParams;
+  date_range_start?: string;
+  date_range_end?: string;
+  credentials_account?: string;
+}
+
+export interface ConditioningCountResult {
+  n_conditioned: number;
+  n_total: number;
+  rows: ConditionedBar[];
 }

@@ -63,6 +63,8 @@ class DayOfWeek(str, Enum):
     wednesday = "wednesday"
     thursday = "thursday"
     friday = "friday"
+    saturday = "saturday"
+    sunday = "sunday"
 
 
 class MonthOfYear(str, Enum):
@@ -191,7 +193,8 @@ class AnalysisRequest(BaseModel):
     symbol: str
     source: str = "yfinance"
     asset_class: str = "equity"
-    event_type: EventType
+    ohlcv_source: str | None = None
+    event_type: EventType | None = None  # None → path OHLCV-all-bars (sin detección de eventos)
     gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
     include_earnings_days: bool | None = None
     n_periods: int = Field(default=5, ge=0, le=60)
@@ -200,6 +203,7 @@ class AnalysisRequest(BaseModel):
     conditioning: ConditioningParams = Field(default_factory=ConditioningParams)
     date_range_start: datetime | None = None
     date_range_end: datetime | None = None
+    credentials_account: str | None = None
 
     @field_validator("symbol")
     @classmethod
@@ -222,17 +226,64 @@ class AnalysisRequest(BaseModel):
         return v
 
 
+class ConditioningCountRequest(BaseModel):
+    """Body para POST /api/v1/analysis/conditioning-count."""
+
+    symbol: str
+    source: str = "yfinance"
+    asset_class: str = "equity"
+    ohlcv_source: str | None = None
+    event_type: EventType | None = None
+    gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
+    include_earnings_days: bool | None = None
+    conditioning: ConditioningParams = Field(default_factory=ConditioningParams)
+    date_range_start: datetime | None = None
+    date_range_end: datetime | None = None
+    credentials_account: str | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, v: str) -> str:
+        if not _SYMBOL_RE.match(v):
+            raise ValueError(
+                f"symbol '{v}' inválido: debe ser entre 1 y 5 letras mayúsculas (A-Z)."
+            )
+        return v
+
+
+class ConditionedBar(BaseModel):
+    """Una barra del dataset que cumple el condicionamiento activo."""
+
+    date: str
+    gap_pct: float | None
+    trend_direction: str | None
+    rsi14: float | None
+    day_of_week: str | None
+    return_5d: float | None
+    vol_regime: str | None
+
+
+class ConditioningCountResult(BaseModel):
+    """Respuesta para POST /api/v1/analysis/conditioning-count."""
+
+    n_conditioned: int
+    n_total: int
+    rows: list[ConditionedBar]
+
+
 class DetectEventsRequest(BaseModel):
     """Body para POST /api/v1/events/detect."""
 
     symbol: str
     source: str = "yfinance"
     asset_class: str = "equity"
+    ohlcv_source: str | None = None
     event_type: EventType
     gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
     include_earnings_days: bool | None = None
     date_range_start: datetime | None = None
     date_range_end: datetime | None = None
+    credentials_account: str | None = None
 
     @field_validator("symbol")
     @classmethod
@@ -277,7 +328,83 @@ class AssetInfo(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Responses — métricas informativas
+# Request — métricas globales (Fase 1, sin eventos)
+# ---------------------------------------------------------------------------
+
+class GlobalInformativeRequest(BaseModel):
+    """Body para POST /api/v1/analysis/informative (Fase 1: línea base del activo)."""
+
+    symbol: str
+    source: str = "yfinance"
+    asset_class: str = "equity"
+    ohlcv_source: str | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, v: str) -> str:
+        if not _SYMBOL_RE.match(v):
+            raise ValueError(
+                f"symbol '{v}' inválido: debe ser entre 1 y 5 letras mayúsculas (A-Z)."
+            )
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Responses — métricas globales (Sin condicionar, Fase 1)
+# ---------------------------------------------------------------------------
+
+class ReturnHistogram(BaseModel):
+    edges: list[float]   # len = n_bins + 1
+    counts: list[int]    # len = n_bins
+
+
+class QQPlotData(BaseModel):
+    theoretical: list[float]
+    sample: list[float]
+
+
+class RollingVolPoint(BaseModel):
+    date: str    # "YYYY-MM-DD"
+    vol: float   # volatilidad anualizada (fracción, ej. 0.25 = 25%)
+
+
+class GlobalInformativeMetrics(BaseModel):
+    """Respuesta para POST /api/v1/analysis/informative — estadísticas globales del activo."""
+
+    symbol: str
+    data_source: str
+    data_source_detail: str | None = None
+    n_observations: int
+    date_start: str
+    date_end: str
+
+    # A — Distribución de retornos
+    return_histogram: ReturnHistogram
+    qqplot_data: QQPlotData
+
+    # B — Estadística descriptiva de forma
+    return_mean: float
+    return_median: float
+    return_std: float
+    return_skewness: float
+    return_kurtosis: float       # excess kurtosis
+    return_min: float
+    return_max: float
+
+    # C — Perfil de volatilidad
+    annualized_vol: float        # std(returns) × √252
+    atr_mean: float              # ATR(14) promedio sobre todo el historial
+    rolling_vol_30d: list[RollingVolPoint]
+
+    # D — Persistencia y memoria
+    hurst_exponent: float | None
+    autocorr_lag1: float
+    autocorr_lag5: float
+    autocorr_lag10: float
+
+
+# ---------------------------------------------------------------------------
+# Responses — métricas informativas (usadas internamente y en conditioned_summary)
 # ---------------------------------------------------------------------------
 
 class InformativeMetrics(BaseModel):
@@ -332,14 +459,47 @@ class ProbabilisticFamily(BaseModel):
     scenarios: list[ScenarioBin]
 
 
+class ConditionedSummary(BaseModel):
+    """
+    Estadísticas de eventos condicionados embebidas en ProbabilisticResult.
+    Reemplaza las métricas informativas que antes venían del endpoint /informative.
+    """
+
+    n_conditioned_events: int
+    n_total_events: int
+    filter_rate: float              # n_conditioned / n_total (0–1)
+
+    # Frecuencia temporal
+    frequency_per_year: float
+    frequency_per_quarter: float
+
+    # Estadísticas del día del evento (P0) — sobre eventos condicionados
+    gap_mean: float | None
+    gap_std: float | None
+    event_day_range_mean: float | None
+    event_day_range_std: float | None
+    event_day_volume_mean: float | None
+    event_day_volume_std: float | None
+    event_day_return_mean: float | None
+    event_day_return_std: float | None
+
+    # Forward returns condicionados
+    avg_forward_return: dict[int, dict]   # {period: {mean, std}}
+
+    # Muestras brutas para density plots (KDE) en frontend
+    return_samples_close: list[float]
+    return_samples_gap: list[float]
+
+
 class ProbabilisticResult(BaseModel):
     """Respuesta completa para POST /api/v1/analysis/probabilistic. Siempre 2 familias."""
 
     symbol: str
     model: ModelType
     data_source: str
-    data_source_detail: str | None = None  # motivo de fallback cuando aplica
+    data_source_detail: str | None = None
     families: list[ProbabilisticFamily]
+    conditioned_summary: ConditionedSummary | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +543,8 @@ class PriceActionRequest(BaseModel):
     symbol: str
     source: str = "yfinance"
     asset_class: str = "equity"
-    event_type: EventType
+    ohlcv_source: str | None = None
+    event_type: EventType | None = None  # None → path OHLCV-all-bars
     gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
     include_earnings_days: bool | None = None
     n_periods: int = Field(default=5, ge=0, le=60)
@@ -391,6 +552,7 @@ class PriceActionRequest(BaseModel):
     conditioning: ConditioningParams = Field(default_factory=ConditioningParams)
     date_range_start: datetime | None = None
     date_range_end: datetime | None = None
+    credentials_account: str | None = None
 
     @field_validator("symbol")
     @classmethod

@@ -4,10 +4,12 @@ import type {
   AssetBasicInfo,
   AssetInfo,
   BrokerStatus,
+  ConditioningCountRequest,
+  ConditioningCountResult,
   DetectEventsRequest,
   EventRecord,
-  InformativeMetrics,
-  InformativeRequest,
+  GlobalInformativeMetrics,
+  GlobalInformativeRequest,
   PriceActionRequest,
   PriceActionResult,
   ProbabilisticResult,
@@ -24,8 +26,8 @@ export const endpoints = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  getInformativeMetrics: (body: InformativeRequest) =>
-    api.request<InformativeMetrics>("/analysis/informative", {
+  getGlobalMetrics: (body: GlobalInformativeRequest) =>
+    api.request<GlobalInformativeMetrics>("/analysis/informative", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -36,6 +38,11 @@ export const endpoints = {
     }),
   getPriceAction: (body: PriceActionRequest) =>
     api.request<PriceActionResult>("/analysis/price-action", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getConditioningCount: (body: ConditioningCountRequest) =>
+    api.request<ConditioningCountResult>("/analysis/conditioning-count", {
       method: "POST",
       body: JSON.stringify(body),
     }),
