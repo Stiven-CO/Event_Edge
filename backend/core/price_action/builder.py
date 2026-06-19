@@ -130,11 +130,12 @@ def _build_intraday(
         else:
             loss_series.append(norm)
 
-    # Recortar todas las series al mínimo largo común
-    n_bars = _min_length(all_series)
-    all_series   = [s[:n_bars] for s in all_series]
-    win_series   = [s[:n_bars] for s in win_series]
-    loss_series  = [s[:n_bars] for s in loss_series]
+    # Alinear al máximo largo; series cortas se rellenan con NaN.
+    # np.nanmean/nanstd ignoran NaN automáticamente en _aggregate_series.
+    n_bars = _max_length(all_series)
+    all_series  = _pad_to(all_series,  n_bars)
+    win_series  = _pad_to(win_series,  n_bars)
+    loss_series = _pad_to(loss_series, n_bars)
 
     # Construir x_labels con timestamps representativos (si hay datos)
     x_labels = _intraday_labels(ohlcv_30min, events_df, n_bars)
@@ -253,6 +254,18 @@ def _min_length(series: list[list[float]]) -> int:
     return min(len(s) for s in series)
 
 
+def _max_length(series: list[list[float]]) -> int:
+    """Retorna el máximo largo de todas las series; 0 si la lista está vacía."""
+    if not series:
+        return 0
+    return max(len(s) for s in series)
+
+
+def _pad_to(series: list[list[float]], n: int) -> list[list[float]]:
+    """Rellena cada serie hasta largo n con float('nan')."""
+    return [s + [float("nan")] * (n - len(s)) for s in series]
+
+
 def _build_warning(
     n_all: int,
     n_win: int,
@@ -273,24 +286,25 @@ def _intraday_labels(
 ) -> list[str]:
     """
     Genera etiquetas de tiempo para las barras de 30min.
-    Toma las timestamps del primer evento disponible como referencia.
+    Usa el evento con MÁS barras disponibles como referencia para garantizar
+    que el rango completo quede representado en el eje x.
     """
     if ohlcv_30min.empty or events_df.empty or n_bars == 0:
         return [str(i) for i in range(n_bars)]
 
+    best_bars: pd.DataFrame | None = None
     for _, row in events_df.iterrows():
         event_ts = _to_utc(row["date"])
         bars = ohlcv_30min[
             ohlcv_30min.index.normalize().tz_convert("UTC") == event_ts.normalize()
         ].sort_index()
-        if not bars.empty:
-            labels = [
-                ts.strftime("%H:%M")
-                for ts in bars.index[:n_bars]
-            ]
-            # Pad si hacen falta
-            while len(labels) < n_bars:
-                labels.append(str(len(labels)))
-            return labels
+        if not bars.empty and (best_bars is None or len(bars) > len(best_bars)):
+            best_bars = bars
+
+    if best_bars is not None:
+        labels = [ts.strftime("%H:%M") for ts in best_bars.index[:n_bars]]
+        while len(labels) < n_bars:
+            labels.append(str(len(labels)))
+        return labels
 
     return [str(i) for i in range(n_bars)]
