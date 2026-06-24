@@ -423,6 +423,18 @@ export function SidebarMenu() {
 
           {epsEnabled && (
             <Accordion title="E · Fundamental">
+              <div className="flex items-center gap-2 py-1 text-xs text-text-secondary">
+                <input
+                  id="take-earnings-cb"
+                  type="checkbox"
+                  checked={localCond.take_earnings === true}
+                  onChange={(e) => setLocalCond({ ...localCond, take_earnings: e.target.checked ? true : undefined })}
+                  className="accent-brand-primary"
+                />
+                <label htmlFor="take-earnings-cb" className="cursor-pointer select-none">
+                  Solo días de reporte de earnings
+                </label>
+              </div>
               <RangeRow label="EPS surprise %" min={-100} max={100}
                 value={{ min: localCond.eps_surprise_pct_min, max: localCond.eps_surprise_pct_max }}
                 onChange={(r) => setLocalCond(updateRange(localCond, "eps_surprise_pct_min", "eps_surprise_pct_max", r))} />

@@ -292,7 +292,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
 
   fetchConditioningCount: async () => {
     const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, gapThreshold, includeEarningsDays, conditioning, dateStart, dateEnd, assetClass } = get();
-    set({ isLoadingConditioningCount: true, error: null });
+    set({ isLoadingConditioningCount: true, error: null, infoMessage: null });
     const resolvedEventType = typeData === "fundamental" ? eventType : null;
     try {
       const result = await endpoints.getConditioningCount({
@@ -308,7 +308,11 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
         ...(source === "mt5" ? { credentials_account: mt5Account } : {}),
       });
-      set({ conditioningCount: result, isLoadingConditioningCount: false });
+      set({
+        conditioningCount: result,
+        isLoadingConditioningCount: false,
+        infoMessage: result.fundamental_load_info ?? null,
+      });
     } catch (error) {
       set({
         isLoadingConditioningCount: false,

@@ -21,7 +21,7 @@ import httpx
 import pandas as pd
 
 _OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
-_EARNINGS_COLUMNS = ["eps_actual", "eps_estimate", "revenue_actual", "revenue_estimate"]
+_EARNINGS_COLUMNS = ["eps_actual", "eps_estimate", "surprise_pct", "revenue_actual", "revenue_estimate"]
 
 
 class MdhUnavailableError(Exception):
@@ -32,7 +32,7 @@ class MdhValidationError(Exception):
     """MDH rechazó la petición por configuración o validación incorrecta (4xx)."""
 
 
-def _empty_earnings_df() -> pd.DataFrame:
+def empty_earnings_df() -> pd.DataFrame:
     df = pd.DataFrame(columns=_EARNINGS_COLUMNS)
     df.index = pd.DatetimeIndex([], tz="UTC", name="date")
     return df
@@ -246,19 +246,19 @@ class MdhClient:
             ) from exc
 
         if response.status_code == 404:
-            return _empty_earnings_df()
+            return empty_earnings_df()
 
         if response.status_code >= 500:
             raise MdhUnavailableError(
                 f"MDH retornó error {response.status_code} para earnings de {symbol}"
             )
         if response.status_code >= 400:
-            return _empty_earnings_df()
+            return empty_earnings_df()
 
         payload = response.json()
         records: list[dict[str, Any]] = payload.get("records", [])
         if not records:
-            return _empty_earnings_df()
+            return empty_earnings_df()
 
         rows = []
         for rec in records:
@@ -269,12 +269,13 @@ class MdhClient:
                 "date": date,
                 "eps_actual": rec.get("eps_actual"),
                 "eps_estimate": rec.get("eps_estimate"),
+                "surprise_pct": rec.get("surprise_pct"),
                 "revenue_actual": rec.get("revenue_actual"),
                 "revenue_estimate": rec.get("revenue_estimate"),
             })
 
         if not rows:
-            return _empty_earnings_df()
+            return empty_earnings_df()
 
         df = pd.DataFrame(rows).set_index("date")
         df.index.name = "date"

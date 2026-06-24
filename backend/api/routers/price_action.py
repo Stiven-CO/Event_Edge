@@ -6,11 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.api.schemas import PriceActionRequest, PriceActionResult, EventType
 from backend.api.routers.analysis import apply_conditioning
 from backend.config import Settings, get_settings
-from backend.core.event_detector import EventDetector
 from backend.core.feature_builder import FeatureBuilder
 from backend.core.price_action import compute_price_action
 from backend.core.price_action.builder import _to_utc
-from backend.data import MdhClient, MdhUnavailableError, MdhValidationError
+from backend.data import MdhClient, MdhUnavailableError, MdhValidationError, empty_earnings_df
 
 router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
 
@@ -59,17 +58,13 @@ async def price_action_analysis(
         is_fundamental = (req.event_type == EventType.earnings)
 
         if is_fundamental:
-            detector = EventDetector()
             try:
                 earnings_df = await mdh_client.fetch_earnings_dates(req.symbol)
-            except MdhUnavailableError as exc:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"MDH no disponible para earnings dates de {req.symbol}: {exc}",
-                )
-            events = detector.detect_earnings(ohlcv_daily, earnings_df)
-            events = [e.model_copy(update={"symbol": req.symbol}) for e in events]
-            features_df = feature_builder.build(ohlcv_daily, events)
+            except MdhUnavailableError:
+                earnings_df = empty_earnings_df()
+            features_df = feature_builder.build_from_fundamental_context(
+                ohlcv_daily, earnings_df, symbol=req.symbol
+            )
         else:
             features_df = feature_builder.build_all_bars(ohlcv_daily, symbol=req.symbol)
 
@@ -88,6 +83,7 @@ async def price_action_analysis(
                 asset_class=req.asset_class,
                 mdh_client=mdh_client,
                 event_dates=event_dates,
+                ohlcv_source=req.ohlcv_source,
             )
 
         # 4. Calcular price action
@@ -186,23 +182,27 @@ async def _load_ohlcv_intraday(
     asset_class: str,
     mdh_client: MdhClient,
     event_dates: list | None = None,
+    ohlcv_source: str | None = None,
 ) -> pd.DataFrame:
     """
     Carga OHLCV 30min solo para los días de eventos condicionados via MDH
     (estrategia specific_event, query-by-dates).
     Retorna DataFrame vacío si MDH no puede proveer los datos.
+    Cuando ohlcv_source está presente (modo fundamental), lo usa como fuente
+    y fuerza asset_class="equity" para el path OHLCV correcto.
     """
     if not event_dates:
         return pd.DataFrame()
 
-    resolved_source = (source or "yfinance").lower()
+    resolved_source = (ohlcv_source or source or "yfinance").lower()
+    resolved_asset_class = "equity" if ohlcv_source else asset_class
     date_strs = [d.isoformat() for d in event_dates]
 
     try:
         return await mdh_client.query_ohlcv_for_event_dates(
             symbol=symbol,
             source=resolved_source,
-            asset_class=asset_class,
+            asset_class=resolved_asset_class,
             timeframe="30m",
             event_dates=date_strs,
         )
@@ -210,7 +210,3 @@ async def _load_ohlcv_intraday(
         return pd.DataFrame()
 
 
-def _empty_earnings_df() -> pd.DataFrame:
-    df = pd.DataFrame(columns=["eps_actual", "eps_estimate", "revenue_actual", "revenue_estimate"])
-    df.index = pd.DatetimeIndex([], tz="UTC", name="date")
-    return df

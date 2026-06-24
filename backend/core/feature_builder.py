@@ -18,17 +18,19 @@ Dependencias: pandas, numpy, ta
 """
 from __future__ import annotations
 
+import logging
 import math
 
 import numpy as np
 import pandas as pd
 import ta
 
+logger = logging.getLogger(__name__)
+
 from backend.api.schemas import (
     BBPosition,
     DayOfWeek,
     EarningsSeason,
-    EventRecord,
     EventType,
     GuidanceDirection,
     MonthOfYear,
@@ -37,6 +39,7 @@ from backend.api.schemas import (
     TrendDirection,
     VolRegime,
 )
+from backend.core.event_detector import _map_earnings_to_trading, _safe_float
 
 _RESULT_COLUMNS = [
     "date", "event_type", "symbol",
@@ -51,119 +54,13 @@ _RESULT_COLUMNS = [
     # D - Volatilidad
     "hist_vol_10d", "vol_ratio_10_30", "atr_pct", "vol_regime",
     # E - Fundamental
-    "eps_surprise_pct", "guidance",
+    "take_earnings", "eps_surprise_pct", "guidance",
     # G - Estacionalidad
     "day_of_week", "month", "quarter", "earnings_season",
 ]
 
 
 class FeatureBuilder:
-
-    def build(
-        self,
-        ohlcv_df: pd.DataFrame,
-        events: list[EventRecord],
-    ) -> pd.DataFrame:
-        """
-        Retorna DataFrame con _RESULT_COLUMNS, una fila por evento.
-        Eventos sin datos suficientes → NaN en features técnicos (no se excluyen).
-        Todos los indicadores técnicos calculados en T-1 (anti-look-ahead).
-        """
-        if not events:
-            return pd.DataFrame(columns=_RESULT_COLUMNS)
-
-        df = ohlcv_df.sort_index()
-
-        # ── Pre-computar series de indicadores sobre todo el OHLCV ──────────
-        s_ema5_vs_ema20 = self._calc_ema5_vs_ema20_ratio(df)
-        s_price_vs_ema50 = self._calc_price_vs_ema50_pct(df)
-        s_trend_dir = self._calc_trend_direction(df)
-        s_return_5d = self._calc_return_nd(df, 5)
-        s_return_20d = self._calc_return_nd(df, 20)
-        s_rsi14 = self._calc_rsi(df, 14)
-        s_bb_position, s_bb_width = self._calc_bb_features(df)
-        s_hist_vol_10d = self._calc_hist_vol(df, 10)
-        s_hist_vol_30d = self._calc_hist_vol(df, 30)
-        s_atr_pct = self._calc_atr_pct(df, 14)
-
-        # Percentiles de vol_10d sobre la serie completa para vol_regime
-        vol10_vals = s_hist_vol_10d.dropna()
-        vol10_p33 = float(vol10_vals.quantile(0.33)) if len(vol10_vals) > 0 else 0.0
-        vol10_p66 = float(vol10_vals.quantile(0.66)) if len(vol10_vals) > 0 else 0.0
-
-        rows: list[dict] = []
-        for event in events:
-            ts = pd.Timestamp(event.date).tz_convert("UTC")
-
-            rsi14_val = _get_series_value(s_rsi14, ts)
-            hist_vol = _get_series_value(s_hist_vol_10d, ts)
-            hist_vol30 = _get_series_value(s_hist_vol_30d, ts)
-
-            # RSI zone
-            rsi14_zone: RSIZone | None = None
-            if rsi14_val is not None:
-                if rsi14_val < 30:
-                    rsi14_zone = RSIZone.oversold
-                elif rsi14_val > 70:
-                    rsi14_zone = RSIZone.overbought
-                else:
-                    rsi14_zone = RSIZone.neutral
-
-            # Vol ratio (10d / 30d)
-            vol_ratio: float | None = None
-            if hist_vol is not None and hist_vol30 is not None and hist_vol30 != 0:
-                vol_ratio = hist_vol / hist_vol30
-
-            # Vol regime (por percentiles de la serie)
-            vol_regime: VolRegime | None = None
-            if hist_vol is not None:
-                if hist_vol <= vol10_p33:
-                    vol_regime = VolRegime.low
-                elif hist_vol <= vol10_p66:
-                    vol_regime = VolRegime.normal
-                else:
-                    vol_regime = VolRegime.high
-
-            # Estacionalidad
-            day_of_week = _ts_to_day_of_week(ts)
-            month = _ts_to_month(ts)
-            quarter = _ts_to_quarter(ts)
-            earnings_season = _ts_to_earnings_season(ts)
-
-            row: dict = {
-                "date": ts,
-                "event_type": event.event_type,
-                "symbol": event.symbol,
-                "gap_pct": event.gap_pct,
-                # A - Tendencia
-                "ema5_vs_ema20_ratio": _get_series_value(s_ema5_vs_ema20, ts),
-                "price_vs_ema50_pct": _get_series_value(s_price_vs_ema50, ts),
-                "trend_direction": _get_series_value(s_trend_dir, ts),
-                # B - Momentum
-                "return_5d": _get_series_value(s_return_5d, ts),
-                "return_20d": _get_series_value(s_return_20d, ts),
-                "rsi14": rsi14_val,
-                # C - Sobreextensión
-                "bb_position": _get_series_value(s_bb_position, ts),
-                "bb_width_pct": _get_series_value(s_bb_width, ts),
-                "rsi14_zone": rsi14_zone,
-                # D - Volatilidad
-                "hist_vol_10d": hist_vol,
-                "vol_ratio_10_30": vol_ratio,
-                "atr_pct": _get_series_value(s_atr_pct, ts),
-                "vol_regime": vol_regime,
-                # E - Fundamental
-                "eps_surprise_pct": event.eps_surprise_pct,
-                "guidance": event.guidance,
-                # G - Estacionalidad
-                "day_of_week": day_of_week,
-                "month": month,
-                "quarter": quarter,
-                "earnings_season": earnings_season,
-            }
-            rows.append(row)
-
-        return pd.DataFrame(rows, columns=_RESULT_COLUMNS)
 
     def build_all_bars(
         self,
@@ -255,8 +152,140 @@ class FeatureBuilder:
                 "vol_ratio_10_30":     vol_ratio_series.values,
                 "atr_pct":             s_atr_pct.values,
                 "vol_regime":          vol_regime_series.values,
+                "take_earnings":       False,
                 "eps_surprise_pct":    None,
                 "guidance":            GuidanceDirection.not_available,
+                "day_of_week":         day_of_week_series.values,
+                "month":               month_series.values,
+                "quarter":             quarter_series.values,
+                "earnings_season":     earnings_season_series.values,
+            },
+            index=df.index,
+        )
+
+        return result[_RESULT_COLUMNS]
+
+    def build_from_fundamental_context(
+        self,
+        ohlcv_df: pd.DataFrame,
+        earnings_df: pd.DataFrame,
+        symbol: str = "",
+    ) -> pd.DataFrame:
+        """
+        Pipeline fundamental: OHLCV + earnings → dataset completo con máscara de earning day.
+
+        Construye features técnicas sobre el historial OHLCV completo y añade
+        datos fundamentales (eps_surprise_pct, guidance) para los días de earning.
+        La columna `take_earnings` identifica qué barras son días de reporte.
+
+        Retorna una fila por barra OHLCV (no pre-filtra). El condicionamiento
+        posterior usa `take_earnings=True` para enfocarse en días de earning.
+        """
+        if ohlcv_df.empty:
+            return pd.DataFrame(columns=_RESULT_COLUMNS)
+
+        df = ohlcv_df.sort_index()
+
+        # Estandarizar índice a UTC
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC")
+        else:
+            df.index = df.index.tz_convert("UTC")
+
+        # ── Pre-calcular series técnicas sobre todo el OHLCV ────────────────
+        s_ema5_vs_ema20  = self._calc_ema5_vs_ema20_ratio(df)
+        s_price_vs_ema50 = self._calc_price_vs_ema50_pct(df)
+        s_trend_dir      = self._calc_trend_direction(df)
+        s_return_5d      = self._calc_return_nd(df, 5)
+        s_return_20d     = self._calc_return_nd(df, 20)
+        s_rsi14          = self._calc_rsi(df, 14)
+        s_bb_position, s_bb_width = self._calc_bb_features(df)
+        s_hist_vol_10d   = self._calc_hist_vol(df, 10)
+        s_hist_vol_30d   = self._calc_hist_vol(df, 30)
+        s_atr_pct        = self._calc_atr_pct(df, 14)
+
+        gap_pct_series = (
+            (df["open"] - df["close"].shift(1)) / df["close"].shift(1)
+        ).fillna(0.0)
+
+        # Percentiles de vol para vol_regime
+        vol10_vals = s_hist_vol_10d.dropna()
+        vol10_p33 = float(vol10_vals.quantile(0.33)) if len(vol10_vals) > 0 else 0.0
+        vol10_p66 = float(vol10_vals.quantile(0.66)) if len(vol10_vals) > 0 else 0.0
+
+        # RSI zone (vectorizado)
+        rsi14_zone_series = pd.Series(index=df.index, dtype=object, name="rsi14_zone")
+        rsi14_zone_series[s_rsi14 < 30]  = RSIZone.oversold
+        rsi14_zone_series[s_rsi14 > 70]  = RSIZone.overbought
+        rsi14_zone_series[(s_rsi14 >= 30) & (s_rsi14 <= 70)] = RSIZone.neutral
+
+        vol_ratio_series = (
+            s_hist_vol_10d / s_hist_vol_30d.replace(0.0, np.nan)
+        ).rename("vol_ratio_10_30")
+
+        vol_regime_series = pd.Series(index=df.index, dtype=object, name="vol_regime")
+        valid_vol = s_hist_vol_10d.notna()
+        vol_regime_series[valid_vol & (s_hist_vol_10d <= vol10_p33)]  = VolRegime.low
+        vol_regime_series[valid_vol & (s_hist_vol_10d > vol10_p33) & (s_hist_vol_10d <= vol10_p66)] = VolRegime.normal
+        vol_regime_series[valid_vol & (s_hist_vol_10d > vol10_p66)]   = VolRegime.high
+
+        day_of_week_series     = pd.Series([_ts_to_day_of_week(ts)     for ts in df.index], index=df.index)
+        month_series           = pd.Series([_ts_to_month(ts)           for ts in df.index], index=df.index)
+        quarter_series         = pd.Series([_ts_to_quarter(ts)         for ts in df.index], index=df.index)
+        earnings_season_series = pd.Series([_ts_to_earnings_season(ts) for ts in df.index], index=df.index)
+
+        # ── Mapeo earnings → fechas de trading (lógica forward >=) ──────────
+        earning_map = _map_earnings_to_trading(earnings_df, df)
+        earning_day_set: set[pd.Timestamp] = set(earning_map.keys())
+        logger.info("[build_from_fundamental_context] %s | OHLCV: %d barras | earnings: %d reportes | earning days mapeados: %d",
+                    symbol, len(df), len(earnings_df), len(earning_day_set))
+
+        # ── Calcular eps_surprise_pct por día de earning ─────────────────────
+        def _calc_eps_surprise(row_data: dict) -> float | None:
+            # surprise_pct de yfinance ya viene calculado (en %); convertir a decimal
+            s = _safe_float(row_data.get("surprise_pct"))
+            if s is not None:
+                return s / 100.0
+            a = _safe_float(row_data.get("eps_actual"))
+            e = _safe_float(row_data.get("eps_estimate"))
+            if a is not None and e is not None and e != 0:
+                return (a - e) / abs(e)
+            return None
+
+        eps_map: dict[pd.Timestamp, float | None] = {
+            ts: _calc_eps_surprise(data) for ts, data in earning_map.items()
+        }
+
+        # ── Construir filas (una por barra OHLCV) ───────────────────────────
+        # Normalizar a midnight para garantizar match con earning_day_set
+        take_earnings_arr = np.array([ts.normalize() in earning_day_set for ts in df.index])
+        eps_surprise_arr  = np.array([eps_map.get(ts.normalize()) for ts in df.index], dtype=object)
+        guidance_arr      = np.array([
+            GuidanceDirection.not_available for _ in df.index
+        ], dtype=object)
+
+        result = pd.DataFrame(
+            {
+                "date":                list(df.index),
+                "event_type":          EventType.earnings,
+                "symbol":              symbol,
+                "gap_pct":             gap_pct_series.values,
+                "ema5_vs_ema20_ratio": s_ema5_vs_ema20.values,
+                "price_vs_ema50_pct":  s_price_vs_ema50.values,
+                "trend_direction":     s_trend_dir.values,
+                "return_5d":           s_return_5d.values,
+                "return_20d":          s_return_20d.values,
+                "rsi14":               s_rsi14.values,
+                "bb_position":         s_bb_position.values,
+                "bb_width_pct":        s_bb_width.values,
+                "rsi14_zone":          rsi14_zone_series.values,
+                "hist_vol_10d":        s_hist_vol_10d.values,
+                "vol_ratio_10_30":     vol_ratio_series.values,
+                "atr_pct":             s_atr_pct.values,
+                "vol_regime":          vol_regime_series.values,
+                "take_earnings":       take_earnings_arr,
+                "eps_surprise_pct":    eps_surprise_arr,
+                "guidance":            guidance_arr,
                 "day_of_week":         day_of_week_series.values,
                 "month":               month_series.values,
                 "quarter":             quarter_series.values,

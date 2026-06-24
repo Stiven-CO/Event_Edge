@@ -115,7 +115,6 @@ class EventRecord(BaseModel):
     eps_surprise_pct: float | None = None
     revenue_actual: float | None = None
     revenue_estimate: float | None = None
-    revenue_surprise_pct: float | None = None
     guidance: GuidanceDirection = GuidanceDirection.not_available
 
 
@@ -162,6 +161,7 @@ class ConditioningParams(BaseModel):
     vol_regimes: list[VolRegime] | None = None
 
     # ── E: Fundamental (solo earnings) ───────────────────────────────
+    take_earnings: bool | None = None               # True → filtrar solo días de earning
     eps_surprise_pct_min: float | None = None
     eps_surprise_pct_max: float | None = None
     guidance_directions: list[GuidanceDirection] | None = None
@@ -252,15 +252,40 @@ class ConditioningCountRequest(BaseModel):
 
 
 class ConditionedBar(BaseModel):
-    """Una barra del dataset que cumple el condicionamiento activo."""
+    """Una barra del dataset que cumple el condicionamiento activo (26 columnas de _RESULT_COLUMNS)."""
 
+    # Identidad
     date: str
-    gap_pct: float | None
-    trend_direction: str | None
-    rsi14: float | None
-    day_of_week: str | None
-    return_5d: float | None
-    vol_regime: str | None
+    event_type: str | None = None
+    symbol: str | None = None
+    # F - Posicionamiento
+    gap_pct: float | None = None
+    # A - Tendencia
+    ema5_vs_ema20_ratio: float | None = None
+    price_vs_ema50_pct: float | None = None
+    trend_direction: str | None = None
+    # B - Momentum
+    return_5d: float | None = None
+    return_20d: float | None = None
+    rsi14: float | None = None
+    # C - Sobreextensión
+    bb_position: str | None = None
+    bb_width_pct: float | None = None
+    rsi14_zone: str | None = None
+    # D - Volatilidad
+    hist_vol_10d: float | None = None
+    vol_ratio_10_30: float | None = None
+    atr_pct: float | None = None
+    vol_regime: str | None = None
+    # E - Fundamental
+    take_earnings: bool | None = None
+    eps_surprise_pct: float | None = None
+    guidance: str | None = None
+    # G - Estacionalidad
+    day_of_week: str | None = None
+    month: str | None = None
+    quarter: str | None = None
+    earnings_season: str | None = None
 
 
 class ConditioningCountResult(BaseModel):
@@ -269,6 +294,7 @@ class ConditioningCountResult(BaseModel):
     n_conditioned: int
     n_total: int
     rows: list[ConditionedBar]
+    fundamental_load_info: str | None = None
 
 
 class DetectEventsRequest(BaseModel):

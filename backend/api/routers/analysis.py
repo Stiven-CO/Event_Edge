@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import logging
 import math
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.api.routers.events import _filter_events_by_date
 import numpy as np
+
+logger = logging.getLogger(__name__)
 from backend.api.schemas import (
     AnalysisRequest,
     ConditionedBar,
@@ -21,7 +23,6 @@ from backend.api.schemas import (
     ProbabilisticResult,
 )
 from backend.config import Settings, get_settings
-from backend.core.event_detector import EventDetector
 from backend.core.feature_builder import FeatureBuilder
 from backend.core.metrics import compute_global_metrics, compute_probabilistic_metrics
 from backend.core.statistical_models import (
@@ -31,7 +32,7 @@ from backend.core.statistical_models import (
     FrequentistModel,
     KDEModel,
 )
-from backend.data import MdhClient, MdhUnavailableError, MdhValidationError
+from backend.data import MdhClient, MdhUnavailableError, MdhValidationError, empty_earnings_df
 
 router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
 
@@ -76,9 +77,10 @@ async def informative_analysis(
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
+        logger.exception("Error en informative_analysis [%s]", req.symbol)
         if settings.debug:
-            raise
+            raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -112,29 +114,26 @@ async def probabilistic_analysis(
                 detail=f"No OHLCV data available for {req.symbol}",
             )
 
-        # Path fundamental (earnings): detecta eventos con EPS/guidance y construye features por evento
-        # Path OHLCV-all-bars: construye features para todas las barras; el condicionamiento define los eventos
+        # Path fundamental: carga OHLCV + earnings, construye dataset completo con máscara take_earnings
+        # Path OHLCV-all-bars: construye features para todas las barras; condicionamiento define los eventos
         is_fundamental = (req.event_type == EventType.earnings)
 
         if is_fundamental:
-            detector = EventDetector()
-            events = await _detect_events(
-                event_type=req.event_type,
-                symbol=req.symbol,
-                gap_threshold_pct=req.gap_threshold_pct,
-                include_earnings_days=req.include_earnings_days,
-                ohlcv_df=ohlcv_df,
-                mdh_client=mdh_client,
-                detector=detector,
+            earnings_df, earnings_info = await _fetch_earnings_safe(req.symbol, mdh_client)
+            logger.info("[probabilistic] %s | OHLCV: %d barras | %s", req.symbol, len(ohlcv_df), earnings_info)
+            features_df = feature_builder.build_from_fundamental_context(
+                ohlcv_df, earnings_df, symbol=req.symbol
             )
-            events = _filter_events_by_date(events, req.date_range_start, req.date_range_end)
-            features_df = feature_builder.build(ohlcv_df, events)
-            n_total = len(events)
+            features_df = _filter_features_by_date(features_df, req.date_range_start, req.date_range_end)
+            n_total = len(features_df)
+            n_earning_days = int(features_df["take_earnings"].sum()) if not features_df.empty else 0
+            logger.info("[probabilistic] %s | features: %d filas | earning days: %d", req.symbol, n_total, n_earning_days)
         else:
             features_df = feature_builder.build_all_bars(ohlcv_df, symbol=req.symbol)
             n_total = len(features_df)
 
         conditioned_df = apply_conditioning(features_df, req.conditioning)
+        logger.info("[probabilistic] %s | condicionados: %d / %d", req.symbol, len(conditioned_df), n_total)
 
         model = _build_model(req.model)
         result = compute_probabilistic_metrics(
@@ -158,9 +157,10 @@ async def probabilistic_analysis(
         return result
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
+        logger.exception("Error en probabilistic_analysis [%s, %s]", req.symbol, req.event_type)
         if settings.debug:
-            raise
+            raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -197,34 +197,38 @@ async def conditioning_count(
             )
 
         is_fundamental = (req.event_type == EventType.earnings)
+        fundamental_load_info: str | None = None
         if is_fundamental:
-            detector = EventDetector()
-            events = await _detect_events(
-                event_type=req.event_type,
-                symbol=req.symbol,
-                gap_threshold_pct=req.gap_threshold_pct,
-                include_earnings_days=req.include_earnings_days,
-                ohlcv_df=ohlcv_df,
-                mdh_client=mdh_client,
-                detector=detector,
+            earnings_df, earnings_info = await _fetch_earnings_safe(req.symbol, mdh_client)
+            logger.info("[conditioning-count] %s | OHLCV: %d barras | %s", req.symbol, len(ohlcv_df), earnings_info)
+            features_df = feature_builder.build_from_fundamental_context(
+                ohlcv_df, earnings_df, symbol=req.symbol
             )
-            events = _filter_events_by_date(events, req.date_range_start, req.date_range_end)
-            features_df = feature_builder.build(ohlcv_df, events)
+            features_df = _filter_features_by_date(features_df, req.date_range_start, req.date_range_end)
+            n_earning_days = int(features_df["take_earnings"].sum()) if not features_df.empty else 0
+            fundamental_load_info = (
+                f"OHLCV: {len(ohlcv_df)} barras · {earnings_info} · "
+                f"{n_earning_days} eventos detectados"
+            )
+            logger.info("[conditioning-count] %s | features: %d filas | earning days: %d", req.symbol, len(features_df), n_earning_days)
         else:
             features_df = feature_builder.build_all_bars(ohlcv_df, symbol=req.symbol)
 
         conditioned_df = apply_conditioning(features_df, req.conditioning)
+        logger.info("[conditioning-count] %s | condicionados: %d / %d", req.symbol, len(conditioned_df), len(features_df))
         rows = [_row_to_bar(row) for _, row in conditioned_df.iterrows()]
         return ConditioningCountResult(
             n_conditioned=len(conditioned_df),
             n_total=len(features_df),
             rows=rows,
+            fundamental_load_info=fundamental_load_info,
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
+        logger.exception("Error en conditioning_count [%s, %s]", req.symbol, req.event_type)
         if settings.debug:
-            raise
+            raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -243,14 +247,40 @@ def _enum_val(v) -> str | None:
 
 
 def _row_to_bar(row) -> ConditionedBar:
+    te = row.get("take_earnings")
     return ConditionedBar(
+        # Identidad
         date=str(row.get("date", ""))[:10],
+        event_type=_enum_val(row.get("event_type")),
+        symbol=str(row.get("symbol")) if row.get("symbol") is not None else None,
+        # F - Posicionamiento
         gap_pct=_safe_float(row.get("gap_pct")),
+        # A - Tendencia
+        ema5_vs_ema20_ratio=_safe_float(row.get("ema5_vs_ema20_ratio")),
+        price_vs_ema50_pct=_safe_float(row.get("price_vs_ema50_pct")),
         trend_direction=_enum_val(row.get("trend_direction")),
-        rsi14=_safe_float(row.get("rsi14")),
-        day_of_week=_enum_val(row.get("day_of_week")),
+        # B - Momentum
         return_5d=_safe_float(row.get("return_5d")),
+        return_20d=_safe_float(row.get("return_20d")),
+        rsi14=_safe_float(row.get("rsi14")),
+        # C - Sobreextensión
+        bb_position=_enum_val(row.get("bb_position")),
+        bb_width_pct=_safe_float(row.get("bb_width_pct")),
+        rsi14_zone=_enum_val(row.get("rsi14_zone")),
+        # D - Volatilidad
+        hist_vol_10d=_safe_float(row.get("hist_vol_10d")),
+        vol_ratio_10_30=_safe_float(row.get("vol_ratio_10_30")),
+        atr_pct=_safe_float(row.get("atr_pct")),
         vol_regime=_enum_val(row.get("vol_regime")),
+        # E - Fundamental
+        take_earnings=bool(te) if te is not None else None,
+        eps_surprise_pct=_safe_float(row.get("eps_surprise_pct")),
+        guidance=_enum_val(row.get("guidance")),
+        # G - Estacionalidad
+        day_of_week=_enum_val(row.get("day_of_week")),
+        month=_enum_val(row.get("month")),
+        quarter=_enum_val(row.get("quarter")),
+        earnings_season=_enum_val(row.get("earnings_season")),
     )
 
 
@@ -449,6 +479,8 @@ def apply_conditioning(df: pd.DataFrame, cond: ConditioningParams) -> pd.DataFra
         f = f[f["vol_regime"].map(lambda x: getattr(x, "value", x)).isin(allowed)]
 
     # ── E: Fundamental ────────────────────────────────────────────────────────
+    if cond.take_earnings is True:
+        f = f[f["take_earnings"] == True]  # noqa: E712
     if cond.eps_surprise_pct_min is not None:
         f = f[f["eps_surprise_pct"] >= cond.eps_surprise_pct_min]
     if cond.eps_surprise_pct_max is not None:
@@ -575,48 +607,40 @@ async def _load_ohlcv(
         )
 
 
-async def _detect_events(
-    event_type: EventType,
+async def _fetch_earnings_safe(
     symbol: str,
-    gap_threshold_pct: float,
-    include_earnings_days: bool | None,
-    ohlcv_df: pd.DataFrame,
     mdh_client: MdhClient,
-    detector: EventDetector,
-):
-    """
-    Detecta eventos earnings o gaps.
-
-    Earnings dates se obtienen vía MDH (/api/v1/data/earnings-dates).
-    Si MDH no puede proveerlos, retorna lista vacía con error graceful
-    para eventos de tipo gap; lanza 503 para eventos de tipo earnings.
-    """
+) -> tuple[pd.DataFrame, str]:
+    """Carga earnings desde MDH. Retorna (df, info_text) sin lanzar excepción."""
     try:
-        earnings_df = await mdh_client.fetch_earnings_dates(symbol)
-    except MdhUnavailableError as exc:
-        if event_type == EventType.earnings:
-            raise HTTPException(
-                status_code=503,
-                detail=f"MDH no disponible para earnings dates de {symbol}: {exc}",
-            )
-        earnings_df = _empty_earnings_df()
-
-    if event_type == EventType.earnings:
-        events = detector.detect_earnings(ohlcv_df, earnings_df)
-    else:
-        earnings_dates = None
-        if include_earnings_days is not True:
-            earnings_dates = earnings_df.index.to_pydatetime().tolist()
-        events = detector.detect_gaps(
-            ohlcv_df,
-            threshold_pct=gap_threshold_pct,
-            earnings_dates=earnings_dates,
-        )
-    return [e.model_copy(update={"symbol": symbol}) for e in events]
+        df = await mdh_client.fetch_earnings_dates(symbol)
+        if df.empty:
+            return df, "Earnings MDH: sin datos disponibles"
+        return df, f"Earnings MDH: {len(df)} reportes"
+    except MdhUnavailableError:
+        return empty_earnings_df(), "Earnings MDH: servicio no disponible"
 
 
-def _empty_earnings_df() -> pd.DataFrame:
-    import pandas as pd  # noqa: PLC0415
-    df = pd.DataFrame(columns=["eps_actual", "eps_estimate", "revenue_actual", "revenue_estimate"])
-    df.index = pd.DatetimeIndex([], tz="UTC", name="date")
-    return df
+def _to_utc(ts: object) -> pd.Timestamp:
+    """Convierte a Timestamp UTC tolerando tanto tz-aware como tz-naive."""
+    t = pd.Timestamp(ts)
+    return t.tz_localize("UTC") if t.tz is None else t.tz_convert("UTC")
+
+
+def _filter_features_by_date(
+    features_df: pd.DataFrame,
+    date_start: object,
+    date_end: object,
+) -> pd.DataFrame:
+    """Filtra el DataFrame de features por rango de fechas usando la columna 'date'."""
+    if features_df.empty:
+        return features_df
+    f = features_df.copy()
+    if date_start is not None:
+        f = f[f["date"] >= _to_utc(date_start)]
+    if date_end is not None:
+        f = f[f["date"] <= _to_utc(date_end)]
+    return f
+
+
+

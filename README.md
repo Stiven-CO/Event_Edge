@@ -13,7 +13,7 @@ El flujo de trabajo típico de un trader cuantitativo dentro de **Event Edge** s
 
 ```text
   ┌────────────────────────┐
-  │  1. Selección de Data  │ ──► Verifica en Data Lake / MDH API
+  │  1. Selección de Data  │ ──► Verifica en Data Lake / MDH API (Dataset enriquecido y normalizado, apto para las siguientes etapas)
   └────────────────────────┘
               │
               ▼
@@ -38,7 +38,12 @@ El flujo de trabajo típico de un trader cuantitativo dentro de **Event Edge** s
 El analista define las propiedades base del activo desde la Interfaz de Usuario (IU): símbolo, tipo de datos, fuente, segmento financiero y rango temporal.
 
 * **Configuración por defecto:** `timeframe: "1d"` y `type_saved: "complete_historical"`.
-* **Lógica Core:** El sistema comprueba primero la presencia local de los archivos en la ruta jerárquica: `datalake/{layer}/{source}/{type_data}/{asset_class}/{symbol}/{timeframe}/{type_saved}/`. Si los datos requeridos están ausentes, **Event Edge** consume de forma automática la API de `market_data_hub` para lanzar un job de ingesta inmediato.
+* **Lógica Core:** El sistema comprueba primero la presencia local de los archivos en la ruta jerárquica:
+OHLCV
+`data/lake/{layer}/{source}/{type_data}/{asset_class}/{symbol}/{timeframe}/{type_saved}/`. 
+Fundamental
+`data/lake/{layer}/{source}/{type_data}/{fundamental_type}/{asset_class}/{symbol}/{timeframe}/{type_saved}/`
+Si los datos requeridos están ausentes, **Event Edge** consume de forma automática la API de `market_data_hub` para lanzar un job de ingesta inmediato.
 
 ### 2. Métricas Estadísticas Informativas Globales
 

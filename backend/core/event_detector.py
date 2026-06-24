@@ -103,8 +103,12 @@ class EventDetector:
 
             eps_actual = _safe_float(row.get("eps_actual"))
             eps_estimate = _safe_float(row.get("eps_estimate"))
+            # surprise_pct de yfinance está en %; convertir a decimal (0.0452 para 4.52%)
+            surprise_raw = _safe_float(row.get("surprise_pct"))
             eps_surprise_pct: float | None = None
-            if eps_actual is not None and eps_estimate is not None and eps_estimate != 0:
+            if surprise_raw is not None:
+                eps_surprise_pct = surprise_raw / 100.0
+            elif eps_actual is not None and eps_estimate is not None and eps_estimate != 0:
                 eps_surprise_pct = (eps_actual - eps_estimate) / abs(eps_estimate)
 
             records.append(
@@ -186,6 +190,49 @@ class EventDetector:
 # ---------------------------------------------------------------------------
 # Helpers internos
 # ---------------------------------------------------------------------------
+
+def _map_earnings_to_trading(
+    earnings_df: pd.DataFrame,
+    ohlcv_df: pd.DataFrame,
+) -> dict[pd.Timestamp, dict]:
+    """
+    Mapea cada fecha de earnings a la sesión de trading más cercana >= earnings_date.
+
+    Retorna dict {trading_date: {eps_actual, eps_estimate, revenue_actual, revenue_estimate}}.
+    Fechas sin sesión disponible o fuera del rango OHLCV se omiten.
+    Duplicados se resuelven igual que en detect_earnings() (forward-avance a fecha libre).
+    """
+    if earnings_df.empty or ohlcv_df.empty:
+        return {}
+
+    trading_dates = ohlcv_df.index.normalize().sort_values()
+    used_dates: set[pd.Timestamp] = set()
+    mapping: dict[pd.Timestamp, dict] = {}
+
+    for earnings_ts, row in earnings_df.sort_index(ascending=True).iterrows():
+        earnings_ts = pd.Timestamp(earnings_ts).normalize().tz_convert("UTC")
+        candidates = trading_dates[trading_dates >= earnings_ts]
+        if candidates.empty:
+            continue
+
+        mapped_date = candidates[0]
+        if mapped_date in used_dates:
+            remaining = [d for d in candidates[candidates > mapped_date] if d not in used_dates]
+            if not remaining:
+                continue
+            mapped_date = remaining[0]
+
+        used_dates.add(mapped_date)
+        mapping[mapped_date] = {
+            "eps_actual": row.get("eps_actual"),
+            "eps_estimate": row.get("eps_estimate"),
+            "surprise_pct": row.get("surprise_pct"),   # Surprise(%) de yfinance (en %)
+            "revenue_actual": row.get("revenue_actual"),
+            "revenue_estimate": row.get("revenue_estimate"),
+        }
+
+    return mapping
+
 
 def _safe_float(value: object) -> float | None:
     """Convierte a float; retorna None si es NaN, None o no convertible."""

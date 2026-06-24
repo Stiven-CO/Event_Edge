@@ -7,8 +7,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`HTTP ${res.status}: ${detail}`);
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json() as { detail?: string };
+      if (body.detail) message = `${message}: ${body.detail}`;
+    } catch {
+      const text = await res.text().catch(() => "");
+      if (text) message = `${message}: ${text}`;
+    }
+    throw new Error(message);
   }
 
   return res.json() as Promise<T>;

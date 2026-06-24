@@ -42,7 +42,6 @@ export interface EventRecord {
   eps_surprise_pct: number | null;
   revenue_actual: number | null;
   revenue_estimate: number | null;
-  revenue_surprise_pct: number | null;
   guidance: GuidanceDirection;
 }
 
@@ -144,6 +143,7 @@ export interface ConditioningParams {
   atr_pct_max?: number;
   vol_regimes?: VolRegime[];
   // E — Fundamental
+  take_earnings?: boolean;
   eps_surprise_pct_min?: number;
   eps_surprise_pct_max?: number;
   guidance_directions?: GuidanceDirection[];
@@ -293,13 +293,38 @@ export interface PriceActionRequest {
 }
 
 export interface ConditionedBar {
+  // Identidad
   date: string;
+  event_type: string | null;
+  symbol: string | null;
+  // F - Posicionamiento
   gap_pct: number | null;
+  // A - Tendencia
+  ema5_vs_ema20_ratio: number | null;
+  price_vs_ema50_pct: number | null;
   trend_direction: string | null;
-  rsi14: number | null;
-  day_of_week: string | null;
+  // B - Momentum
   return_5d: number | null;
+  return_20d: number | null;
+  rsi14: number | null;
+  // C - Sobreextensión
+  bb_position: string | null;
+  bb_width_pct: number | null;
+  rsi14_zone: string | null;
+  // D - Volatilidad
+  hist_vol_10d: number | null;
+  vol_ratio_10_30: number | null;
+  atr_pct: number | null;
   vol_regime: string | null;
+  // E - Fundamental
+  take_earnings: boolean | null;
+  eps_surprise_pct: number | null;
+  guidance: string | null;
+  // G - Estacionalidad
+  day_of_week: string | null;
+  month: string | null;
+  quarter: string | null;
+  earnings_season: string | null;
 }
 
 export interface ConditioningCountRequest {
@@ -320,4 +345,5 @@ export interface ConditioningCountResult {
   n_conditioned: number;
   n_total: number;
   rows: ConditionedBar[];
+  fundamental_load_info?: string | null;
 }

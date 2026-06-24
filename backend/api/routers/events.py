@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.api.schemas import DetectEventsRequest, EventRecord, EventType
 from backend.config import Settings, get_settings
 from backend.core.event_detector import EventDetector
-from backend.data import MdhClient, MdhUnavailableError, MdhValidationError
+from backend.data import MdhClient, MdhUnavailableError, MdhValidationError, empty_earnings_df
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
 
@@ -46,7 +46,7 @@ async def detect_events(
                     status_code=503,
                     detail=f"MDH no disponible para earnings dates de {req.symbol}: {exc}",
                 )
-            earnings_df = _empty_earnings_df()
+            earnings_df = empty_earnings_df()
 
         if req.event_type == EventType.earnings:
             events = detector.detect_earnings(ohlcv_df, earnings_df)
@@ -136,12 +136,6 @@ async def _load_ohlcv(
             status_code=503,
             detail=f"Error al re-consultar {req.symbol} tras ingesta: {exc}",
         )
-
-
-def _empty_earnings_df() -> pd.DataFrame:
-    df = pd.DataFrame(columns=["eps_actual", "eps_estimate", "revenue_actual", "revenue_estimate"])
-    df.index = pd.DatetimeIndex([], tz="UTC", name="date")
-    return df
 
 
 def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
