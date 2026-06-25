@@ -276,6 +276,7 @@ export interface PriceActionResult {
   n_events_loss:    number;
   n_events_omitted: number;
   warning: "insufficient_events" | "some_events_omitted" | null;
+  intraday_source_error: string | null;
 }
 
 export interface PriceActionRequest {

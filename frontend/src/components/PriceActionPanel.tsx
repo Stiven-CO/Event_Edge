@@ -67,7 +67,7 @@ export function PriceActionPanel() {
 
   if (!result) return null;
 
-  const { series_all, series_win, series_loss, x_labels, n_events_all, n_events_win, n_events_loss, n_events_omitted, warning, anchor_mode, n_periods } = result;
+  const { series_all, series_win, series_loss, x_labels, n_events_all, n_events_win, n_events_loss, n_events_omitted, warning, anchor_mode, n_periods, intraday_source_error } = result;
 
   const seriesMap: Record<FilterKey, PriceActionSeries> = {
     all:  series_all,
@@ -140,6 +140,12 @@ export function PriceActionPanel() {
             <span className="flex items-center gap-1 rounded-full bg-status-warning/15 px-2 py-0.5 text-[10px] text-status-warning">
               <AlertTriangle className="h-3 w-3" />
               Datos insuficientes
+            </span>
+          )}
+          {intraday_source_error && (
+            <span className="flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] text-red-400" title={intraday_source_error}>
+              <AlertTriangle className="h-3 w-3" />
+              Error MDH intraday
             </span>
           )}
         </div>
@@ -280,6 +286,12 @@ export function PriceActionPanel() {
           <span className="flex items-center gap-1 text-status-warning">
             <AlertTriangle className="h-3 w-3" />
             {n_events_omitted} evento{n_events_omitted > 1 ? "s" : ""} omitido{n_events_omitted > 1 ? "s" : ""} (sin datos 30min)
+          </span>
+        )}
+        {intraday_source_error && (
+          <span className="flex items-center gap-1 text-red-400 text-[10px] max-w-lg truncate" title={intraday_source_error}>
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            MDH: {intraday_source_error}
           </span>
         )}
       </div>

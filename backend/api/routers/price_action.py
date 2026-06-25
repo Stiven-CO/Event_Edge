@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
+
+logger = logging.getLogger(__name__)
 
 from backend.api.schemas import PriceActionRequest, PriceActionResult, EventType
 from backend.api.routers.analysis import apply_conditioning
@@ -72,12 +76,18 @@ async def price_action_analysis(
 
         # 3. Si horizonte intraday (n_periods=0), cargar 30min para barras condicionadas
         ohlcv_intraday: pd.DataFrame | None = None
+        intraday_error: str | None = None
         if req.n_periods == 0 and not conditioned_df.empty:
             event_dates = sorted(set(
                 _to_utc(row["date"]).date()
                 for _, row in conditioned_df.iterrows()
             ))
-            ohlcv_intraday = await _load_ohlcv_intraday(
+            logger.info(
+                "[price-action] %s | intraday 30m | fuente=%s | ohlcv_source=%s | eventos=%d | fechas=%s",
+                req.symbol, req.source, req.ohlcv_source, len(event_dates),
+                [d.isoformat() for d in event_dates[:5]],
+            )
+            ohlcv_intraday, intraday_error = await _load_ohlcv_intraday(
                 symbol=req.symbol,
                 source=req.source,
                 asset_class=req.asset_class,
@@ -85,15 +95,22 @@ async def price_action_analysis(
                 event_dates=event_dates,
                 ohlcv_source=req.ohlcv_source,
             )
+            logger.info(
+                "[price-action] %s | intraday recibido: %d barras%s",
+                req.symbol, len(ohlcv_intraday) if ohlcv_intraday is not None else 0,
+                f" | error={intraday_error}" if intraday_error else "",
+            )
 
         # 4. Calcular price action
-        return compute_price_action(
+        result = compute_price_action(
             events_df=conditioned_df,
             ohlcv_daily_df=ohlcv_daily,
             ohlcv_intraday_df=ohlcv_intraday,
             n_periods=req.n_periods,
             include_bands=req.include_bands,
         )
+        result.intraday_source_error = intraday_error
+        return result
 
     except HTTPException:
         raise
@@ -183,30 +200,45 @@ async def _load_ohlcv_intraday(
     mdh_client: MdhClient,
     event_dates: list | None = None,
     ohlcv_source: str | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, str | None]:
     """
     Carga OHLCV 30min solo para los días de eventos condicionados via MDH
     (estrategia specific_event, query-by-dates).
-    Retorna DataFrame vacío si MDH no puede proveer los datos.
+    Retorna (DataFrame, None) en éxito o (DataFrame vacío, msg_error) si MDH falla.
     Cuando ohlcv_source está presente (modo fundamental), lo usa como fuente
     y fuerza asset_class="equity" para el path OHLCV correcto.
     """
     if not event_dates:
-        return pd.DataFrame()
+        return pd.DataFrame(), None
 
     resolved_source = (ohlcv_source or source or "yfinance").lower()
     resolved_asset_class = "equity" if ohlcv_source else asset_class
     date_strs = [d.isoformat() for d in event_dates]
 
+    logger.info(
+        "[_load_ohlcv_intraday] %s | source=%s asset_class=%s tf=30m | %d fechas",
+        symbol, resolved_source, resolved_asset_class, len(date_strs),
+    )
+
     try:
-        return await mdh_client.query_ohlcv_for_event_dates(
+        df = await mdh_client.query_ohlcv_for_event_dates(
             symbol=symbol,
             source=resolved_source,
             asset_class=resolved_asset_class,
             timeframe="30m",
             event_dates=date_strs,
         )
-    except MdhUnavailableError:
-        return pd.DataFrame()
+        logger.info(
+            "[_load_ohlcv_intraday] %s | MDH OK → %d barras",
+            symbol, len(df),
+        )
+        return df, None
+    except MdhUnavailableError as exc:
+        error_msg = str(exc)
+        logger.warning(
+            "[_load_ohlcv_intraday] %s | MDH error (source=%s): %s",
+            symbol, resolved_source, error_msg,
+        )
+        return pd.DataFrame(), error_msg
 
 

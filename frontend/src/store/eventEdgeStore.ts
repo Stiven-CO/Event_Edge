@@ -220,7 +220,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
           include_earnings_days: eventType === "gap" ? includeEarningsDays : null,
           ...(dateStart ? { date_range_start: dateStart } : {}),
           ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
-          ...(source === "mt5" ? { credentials_account: mt5Account } : {}),
+          ...((source === "mt5" || ohlcvSource === "mt5") ? { credentials_account: mt5Account } : {}),
         }),
         endpoints.getAssetInfo(symbol),
       ]);
@@ -278,7 +278,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         conditioning: _normalizeConditioning(conditioning),
         ...(dateStart ? { date_range_start: dateStart } : {}),
         ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
-        ...(source === "mt5" ? { credentials_account: mt5Account } : {}),
+        ...((source === "mt5" || ohlcvSource === "mt5") ? { credentials_account: mt5Account } : {}),
       };
       const probabilisticResult = await endpoints.getProbabilisticMetrics(body);
       set({ probabilisticResult, isLoadingMetrics: false });
@@ -306,7 +306,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         conditioning: _normalizeConditioning(conditioning),
         ...(dateStart ? { date_range_start: dateStart } : {}),
         ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
-        ...(source === "mt5" ? { credentials_account: mt5Account } : {}),
+        ...((source === "mt5" || ohlcvSource === "mt5") ? { credentials_account: mt5Account } : {}),
       });
       set({
         conditioningCount: result,
@@ -339,7 +339,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         conditioning: _normalizeConditioning(conditioning),
         ...(dateStart ? { date_range_start: dateStart } : {}),
         ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
-        ...(source === "mt5" ? { credentials_account: mt5Account } : {}),
+        ...((source === "mt5" || ohlcvSource === "mt5") ? { credentials_account: mt5Account } : {}),
       });
       set({ priceActionResult: result, isLoadingPriceAction: false });
     } catch (error) {

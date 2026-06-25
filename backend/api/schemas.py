@@ -561,6 +561,7 @@ class PriceActionResult(BaseModel):
     n_events_loss:    int
     n_events_omitted: int         # eventos sin datos de 30min (solo relevante en intraday)
     warning: str | None           # "insufficient_events" | "some_events_omitted" | None
+    intraday_source_error: str | None = None  # error de MDH al obtener datos 30m
 
 
 class PriceActionRequest(BaseModel):

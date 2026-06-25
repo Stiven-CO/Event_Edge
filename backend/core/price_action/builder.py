@@ -95,12 +95,14 @@ def _build_intraday(
         daily_key = daily_by_date_intraday.get(event_ts.normalize())
         if daily_key is None:
             n_omitted += 1
+            logger.warning("[_build_intraday] Evento %s no encontrado en OHLCV diario; omitido", event_date_str)
             continue
 
         # Referencia: open diario de P0
         ref = float(daily_idx.loc[daily_key, "open"])
         if math.isnan(ref) or ref == 0:
             n_omitted += 1
+            logger.warning("[_build_intraday] Evento %s tiene open diario inválido (%.4f); omitido", event_date_str, ref)
             continue
 
         # Clasificar win/loss con datos diarios
@@ -110,7 +112,10 @@ def _build_intraday(
         # Verificar disponibilidad de datos intradía
         if event_date_str not in available_dates:
             n_omitted += 1
-            logger.debug("Evento %s sin datos intradía de 30min; omitido del plot", event_date_str)
+            logger.warning(
+                "[_build_intraday] Evento %s sin datos 30min en DataFrame (available_dates=%d); omitido",
+                event_date_str, len(available_dates),
+            )
             continue
 
         # Extraer barras del día del evento
@@ -129,6 +134,11 @@ def _build_intraday(
             win_series.append(norm)
         else:
             loss_series.append(norm)
+
+    logger.info(
+        "[_build_intraday] Resultado: %d eventos procesados, %d omitidos (30min vacíos)",
+        len(all_series), n_omitted,
+    )
 
     # Alinear al máximo largo; series cortas se rellenan con NaN.
     # np.nanmean/nanstd ignoran NaN automáticamente en _aggregate_series.
