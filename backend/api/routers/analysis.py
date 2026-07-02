@@ -253,6 +253,18 @@ def _row_to_bar(row) -> ConditionedBar:
         date=str(row.get("date", ""))[:10],
         event_type=_enum_val(row.get("event_type")),
         symbol=str(row.get("symbol")) if row.get("symbol") is not None else None,
+        # Base cruda (OHLCV)
+        open=_safe_float(row.get("open")),
+        high=_safe_float(row.get("high")),
+        low=_safe_float(row.get("low")),
+        close=_safe_float(row.get("close")),
+        volume=_safe_float(row.get("volume")),
+        # Base cruda (Earnings)
+        eps_actual=_safe_float(row.get("eps_actual")),
+        eps_estimate=_safe_float(row.get("eps_estimate")),
+        surprise_pct=_safe_float(row.get("surprise_pct")),
+        revenue_actual=_safe_float(row.get("revenue_actual")),
+        revenue_estimate=_safe_float(row.get("revenue_estimate")),
         # F - Posicionamiento
         gap_pct=_safe_float(row.get("gap_pct")),
         # A - Tendencia

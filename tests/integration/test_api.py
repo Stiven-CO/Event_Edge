@@ -263,6 +263,39 @@ async def test_price_action_include_bands_false(test_client: AsyncClient):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_conditioning_count_no_filters_returns_full_dataset_with_raw_columns(
+    test_client: AsyncClient,
+):
+    """Sin filtros de condicionamiento, retorna el dataset completo con columnas base crudas."""
+    r = await test_client.post(
+        "/api/v1/analysis/conditioning-count",
+        json={
+            "symbol": "AAPL",
+            "source": "yfinance",
+            "event_type": "earnings",
+            "conditioning": {},
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["n_conditioned"] == data["n_total"]
+    assert data["rows"]
+
+    first = data["rows"][0]
+    assert first["open"] is not None
+    assert first["high"] is not None
+    assert first["low"] is not None
+    assert first["close"] is not None
+    assert first["volume"] is not None
+
+    earning_rows = [row for row in data["rows"] if row["take_earnings"]]
+    non_earning_rows = [row for row in data["rows"] if not row["take_earnings"]]
+    assert any(row["eps_actual"] is not None for row in earning_rows)
+    assert all(row["eps_actual"] is None for row in non_earning_rows)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_price_action_invalid_symbol(test_client: AsyncClient):
     """Symbol inválido → 422."""
     r = await test_client.post(

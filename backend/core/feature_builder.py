@@ -43,6 +43,10 @@ from backend.core.event_detector import _map_earnings_to_trading, _safe_float
 
 _RESULT_COLUMNS = [
     "date", "event_type", "symbol",
+    # Base cruda (OHLCV)
+    "open", "high", "low", "close", "volume",
+    # Base cruda (Earnings)
+    "eps_actual", "eps_estimate", "surprise_pct", "revenue_actual", "revenue_estimate",
     # F - Posicionamiento (raw del evento)
     "gap_pct",
     # A - Tendencia
@@ -138,6 +142,16 @@ class FeatureBuilder:
                 "date":                list(df.index),
                 "event_type":          EventType.gap,
                 "symbol":              symbol,
+                "open":                df["open"].values,
+                "high":                df["high"].values,
+                "low":                 df["low"].values,
+                "close":               df["close"].values,
+                "volume":              df["volume"].values,
+                "eps_actual":          None,
+                "eps_estimate":        None,
+                "surprise_pct":        None,
+                "revenue_actual":      None,
+                "revenue_estimate":    None,
                 "gap_pct":             gap_pct_series.values,
                 "ema5_vs_ema20_ratio": s_ema5_vs_ema20.values,
                 "price_vs_ema50_pct":  s_price_vs_ema50.values,
@@ -264,11 +278,38 @@ class FeatureBuilder:
             GuidanceDirection.not_available for _ in df.index
         ], dtype=object)
 
+        # Base cruda de earnings (sin transformar), por fecha de trading mapeada
+        eps_actual_arr = np.array(
+            [earning_map.get(ts.normalize(), {}).get("eps_actual") for ts in df.index], dtype=object
+        )
+        eps_estimate_arr = np.array(
+            [earning_map.get(ts.normalize(), {}).get("eps_estimate") for ts in df.index], dtype=object
+        )
+        surprise_pct_arr = np.array(
+            [earning_map.get(ts.normalize(), {}).get("surprise_pct") for ts in df.index], dtype=object
+        )
+        revenue_actual_arr = np.array(
+            [earning_map.get(ts.normalize(), {}).get("revenue_actual") for ts in df.index], dtype=object
+        )
+        revenue_estimate_arr = np.array(
+            [earning_map.get(ts.normalize(), {}).get("revenue_estimate") for ts in df.index], dtype=object
+        )
+
         result = pd.DataFrame(
             {
                 "date":                list(df.index),
                 "event_type":          EventType.earnings,
                 "symbol":              symbol,
+                "open":                df["open"].values,
+                "high":                df["high"].values,
+                "low":                 df["low"].values,
+                "close":               df["close"].values,
+                "volume":              df["volume"].values,
+                "eps_actual":          eps_actual_arr,
+                "eps_estimate":        eps_estimate_arr,
+                "surprise_pct":        surprise_pct_arr,
+                "revenue_actual":      revenue_actual_arr,
+                "revenue_estimate":    revenue_estimate_arr,
                 "gap_pct":             gap_pct_series.values,
                 "ema5_vs_ema20_ratio": s_ema5_vs_ema20.values,
                 "price_vs_ema50_pct":  s_price_vs_ema50.values,

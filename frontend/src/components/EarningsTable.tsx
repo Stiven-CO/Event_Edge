@@ -40,6 +40,17 @@ const ALL_COLUMNS: ColDef[] = [
   { key: "date",              label: "Fecha",            cluster: "Identidad",     format: (v) => v ? new Date(v as string).toLocaleDateString() : "–" },
   { key: "event_type",        label: "Tipo Evento",      cluster: "Identidad",     format: fmtStr },
   { key: "symbol",            label: "Símbolo",          cluster: "Identidad",     format: fmtStr },
+  // ── Base cruda (OHLCV + Earnings)
+  { key: "open",              label: "Open",             cluster: "Base",          format: (v) => fmtNum(v, 2) },
+  { key: "high",              label: "High",             cluster: "Base",          format: (v) => fmtNum(v, 2) },
+  { key: "low",               label: "Low",              cluster: "Base",          format: (v) => fmtNum(v, 2) },
+  { key: "close",             label: "Close",            cluster: "Base",          format: (v) => fmtNum(v, 2) },
+  { key: "volume",            label: "Volumen",          cluster: "Base",          format: (v) => v == null ? "–" : Number(v).toLocaleString() },
+  { key: "eps_actual",        label: "EPS Actual",       cluster: "Base",          format: (v) => fmtNum(v, 2) },
+  { key: "eps_estimate",      label: "EPS Estimado",     cluster: "Base",          format: (v) => fmtNum(v, 2) },
+  { key: "surprise_pct",      label: "Sorpresa % (raw)", cluster: "Base",          format: (v) => v == null ? "–" : `${(v as number).toFixed(2)}%` },
+  { key: "revenue_actual",    label: "Revenue Actual",   cluster: "Base",          format: (v) => v == null ? "–" : Number(v).toLocaleString() },
+  { key: "revenue_estimate",  label: "Revenue Estimado", cluster: "Base",          format: (v) => v == null ? "–" : Number(v).toLocaleString() },
   // ── F - Posicionamiento
   { key: "gap_pct",           label: "Gap%",             cluster: "F · Posición",  format: (v) => fmtPct(v),
     colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
@@ -217,6 +228,25 @@ function ColumnSelector({
   );
 }
 
+// ── Date search helper ────────────────────────────────────────────────────────
+
+function findNearestDate(rows: ConditionedBar[], target: string): string | null {
+  if (!rows.length || !target) return null;
+  const targetMs = new Date(target).getTime();
+  if (Number.isNaN(targetMs)) return null;
+
+  let best = rows[0].date;
+  let bestDelta = Infinity;
+  for (const r of rows) {
+    const delta = Math.abs(new Date(r.date).getTime() - targetMs);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      best = r.date;
+    }
+  }
+  return best;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function EarningsTable() {
@@ -224,6 +254,9 @@ export function EarningsTable() {
   const conditioning      = useEventEdgeStore((s) => s.conditioning);
   const [desc, setDesc]   = useState(true);
   const [visibleCols, setVisibleCols] = useState<Set<string>>(DEFAULT_VISIBLE);
+  const [searchDate, setSearchDate]     = useState("");
+  const [highlightDate, setHighlightDate] = useState<string | null>(null);
+  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
   const rows: ConditionedBar[] = useMemo(() => {
     const source = conditioningCount?.rows ?? [];
@@ -232,6 +265,14 @@ export function EarningsTable() {
       return desc ? -delta : delta;
     });
   }, [conditioningCount, desc]);
+
+  function handleSearch() {
+    const nearest = findNearestDate(rows, searchDate);
+    setHighlightDate(nearest);
+    if (nearest) {
+      rowRefs.current.get(nearest)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }
 
   const summary = formatConditioningSummary(conditioning);
   const activeCols = ALL_COLUMNS.filter((c) => visibleCols.has(c.key));
@@ -243,10 +284,20 @@ export function EarningsTable() {
         <div className="min-w-0 flex-1">
           <h3 className="font-display text-lg font-semibold">Events</h3>
           <p className="mt-0.5 truncate text-xs text-ink-muted">
-            {summary ?? "Sin filtros activos"}
+            {summary ?? "Sin filtros activos — vista de preview del dataset completo"}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <input
+            type="date"
+            className="input h-7 text-xs"
+            value={searchDate}
+            onChange={(e) => setSearchDate(e.target.value)}
+            title="Buscar por fecha (usa la barra hábil más cercana)"
+          />
+          <button type="button" className="button-ghost text-xs" onClick={handleSearch}>
+            Buscar
+          </button>
           <ColumnSelector visibleCols={visibleCols} onChange={setVisibleCols} />
           <button type="button" className="button-ghost text-xs" onClick={() => setDesc((v) => !v)}>
             Fecha {desc ? "↓" : "↑"}
@@ -269,7 +320,13 @@ export function EarningsTable() {
             {rows.map((r) => (
               <tr
                 key={r.date}
-                className="border-t border-surface-border/60 text-ink-primary hover:bg-surface-overlay/40"
+                ref={(el) => {
+                  if (el) rowRefs.current.set(r.date, el);
+                  else rowRefs.current.delete(r.date);
+                }}
+                className={`border-t border-surface-border/60 text-ink-primary hover:bg-surface-overlay/40 ${
+                  r.date === highlightDate ? "bg-accent/20" : ""
+                }`}
               >
                 {activeCols.map((col) => {
                   const raw = r[col.key];
@@ -293,7 +350,7 @@ export function EarningsTable() {
             {conditioningCount === null && (
               <tr>
                 <td colSpan={colSpan} className="px-3 py-6 text-center text-ink-muted">
-                  Aplica un condicionamiento para ver las filas del dataset.
+                  Pulsa "Aplicar Condicionamiento" (sin filtros) para ver el dataset completo, o define filtros para condicionar.
                 </td>
               </tr>
             )}

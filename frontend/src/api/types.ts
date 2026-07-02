@@ -298,6 +298,18 @@ export interface ConditionedBar {
   date: string;
   event_type: string | null;
   symbol: string | null;
+  // Base cruda (OHLCV)
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number | null;
+  // Base cruda (Earnings)
+  eps_actual: number | null;
+  eps_estimate: number | null;
+  surprise_pct: number | null;
+  revenue_actual: number | null;
+  revenue_estimate: number | null;
   // F - Posicionamiento
   gap_pct: number | null;
   // A - Tendencia

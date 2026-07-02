@@ -258,6 +258,18 @@ class ConditionedBar(BaseModel):
     date: str
     event_type: str | None = None
     symbol: str | None = None
+    # Base cruda (OHLCV)
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    close: float | None = None
+    volume: float | None = None
+    # Base cruda (Earnings)
+    eps_actual: float | None = None
+    eps_estimate: float | None = None
+    surprise_pct: float | None = None
+    revenue_actual: float | None = None
+    revenue_estimate: float | None = None
     # F - Posicionamiento
     gap_pct: float | None = None
     # A - Tendencia
