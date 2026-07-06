@@ -25,6 +25,13 @@ _NY_TZ = ZoneInfo("America/New_York")
 _MARKET_CLOSE = time(16, 0)  # 16:00 ET
 
 
+def _to_utc_index(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """Garantiza índice UTC-aware: localiza si es naive, convierte si ya tiene tz."""
+    if index.tz is None:
+        return index.tz_localize("UTC")
+    return index.tz_convert("UTC")
+
+
 def resolve_earnings_effective_date(report_ts: pd.Timestamp) -> pd.Timestamp:
     """
     Resuelve la fecha (medianoche UTC) a partir de la cual se busca la sesión
@@ -63,6 +70,9 @@ class EventDetector:
         """
         if ohlcv_df.empty or earnings_df.empty:
             return []
+
+        ohlcv_df = ohlcv_df.copy()
+        ohlcv_df.index = _to_utc_index(ohlcv_df.index)
 
         trading_dates = ohlcv_df.index.normalize().sort_values()
         trading_dates_set: set[pd.Timestamp] = set(trading_dates)
@@ -164,6 +174,7 @@ class EventDetector:
             return []
 
         df = ohlcv_df.copy()
+        df.index = _to_utc_index(df.index)
         df = df.sort_index()
 
         prev_close = df["close"].shift(1)
@@ -221,7 +232,7 @@ def _map_earnings_to_trading(
     if earnings_df.empty or ohlcv_df.empty:
         return {}
 
-    trading_dates = ohlcv_df.index.normalize().sort_values()
+    trading_dates = _to_utc_index(ohlcv_df.index).normalize().sort_values()
     used_dates: set[pd.Timestamp] = set()
     mapping: dict[pd.Timestamp, dict] = {}
 

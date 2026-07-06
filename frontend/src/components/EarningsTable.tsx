@@ -46,7 +46,7 @@ function fmtBool(v: unknown): string {
 
 const ALL_COLUMNS: ColDef[] = [
   // ── Identidad
-  { key: "date",              label: "Fecha",            cluster: "Identidad",     format: (v) => v ? new Date(v as string).toLocaleDateString() : "–" },
+  { key: "date",              label: "Fecha",            cluster: "Identidad",     format: (v) => v ? new Date(v as string).toLocaleDateString(undefined, { timeZone: "UTC" }) : "–" },
   { key: "event_type",        label: "Tipo Evento",      cluster: "Identidad",     format: fmtStr },
   { key: "symbol",            label: "Símbolo",          cluster: "Identidad",     format: fmtStr },
   // ── Base cruda (OHLCV + Earnings)
