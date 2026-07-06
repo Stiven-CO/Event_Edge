@@ -20,6 +20,15 @@ function fmtPct(v: unknown, decimals = 2): string {
   return `${pct >= 0 ? "+" : ""}${pct.toFixed(decimals)}%`;
 }
 
+// Para columnas que el backend ya calcula en escala porcentual (×100 aplicado
+// en feature_builder.py) — a diferencia de gap_pct/eps_surprise_pct, que se
+// guardan como fracción decimal y sí requieren el ×100 de fmtPct.
+function fmtPctRaw(v: unknown, decimals = 2): string {
+  if (v == null) return "–";
+  const n = v as number;
+  return `${n >= 0 ? "+" : ""}${n.toFixed(decimals)}%`;
+}
+
 function fmtNum(v: unknown, decimals = 4): string {
   if (v == null) return "–";
   return (v as number).toFixed(decimals);
@@ -56,23 +65,23 @@ const ALL_COLUMNS: ColDef[] = [
     colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
   // ── A - Tendencia
   { key: "ema5_vs_ema20_ratio",  label: "EMA5/EMA20",   cluster: "A · Tendencia", format: (v) => fmtNum(v, 4) },
-  { key: "price_vs_ema50_pct",   label: "Precio/EMA50%",cluster: "A · Tendencia", format: (v) => fmtPct(v),
+  { key: "price_vs_ema50_pct",   label: "Precio/EMA50%",cluster: "A · Tendencia", format: (v) => fmtPctRaw(v),
     colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
   { key: "trend_direction",   label: "Tendencia",        cluster: "A · Tendencia", format: fmtStr },
   // ── B - Momentum
-  { key: "return_5d",         label: "Ret. 5d",          cluster: "B · Momentum",  format: (v) => fmtPct(v),
+  { key: "return_5d",         label: "Ret. 5d",          cluster: "B · Momentum",  format: (v) => fmtPctRaw(v),
     colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
-  { key: "return_20d",        label: "Ret. 20d",         cluster: "B · Momentum",  format: (v) => fmtPct(v),
+  { key: "return_20d",        label: "Ret. 20d",         cluster: "B · Momentum",  format: (v) => fmtPctRaw(v),
     colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
   { key: "rsi14",             label: "RSI(14)",          cluster: "B · Momentum",  format: (v) => fmtNum(v, 1) },
   // ── C - Sobreextensión
   { key: "bb_position",       label: "Pos. BB",          cluster: "C · Sobreext.", format: fmtStr },
-  { key: "bb_width_pct",      label: "Ancho BB%",        cluster: "C · Sobreext.", format: (v) => fmtPct(v) },
+  { key: "bb_width_pct",      label: "Ancho BB%",        cluster: "C · Sobreext.", format: (v) => fmtPctRaw(v) },
   { key: "rsi14_zone",        label: "Zona RSI",         cluster: "C · Sobreext.", format: fmtStr },
   // ── D - Volatilidad
-  { key: "hist_vol_10d",      label: "Vol.Hist 10d",     cluster: "D · Volatilidad", format: (v) => fmtPct(v) },
+  { key: "hist_vol_10d",      label: "Vol.Hist 10d",     cluster: "D · Volatilidad", format: (v) => fmtPctRaw(v) },
   { key: "vol_ratio_10_30",   label: "Ratio Vol 10/30",  cluster: "D · Volatilidad", format: (v) => fmtNum(v, 2) },
-  { key: "atr_pct",           label: "ATR%",             cluster: "D · Volatilidad", format: (v) => fmtPct(v) },
+  { key: "atr_pct",           label: "ATR%",             cluster: "D · Volatilidad", format: (v) => fmtPctRaw(v) },
   { key: "vol_regime",        label: "Régimen Vol.",     cluster: "D · Volatilidad", format: fmtStr },
   // ── E - Fundamental
   { key: "take_earnings",     label: "Día Earnings",     cluster: "E · Fundamental", format: fmtBool },

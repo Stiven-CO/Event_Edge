@@ -39,7 +39,10 @@ from backend.api.schemas import (
     TrendDirection,
     VolRegime,
 )
-from backend.core.event_detector import _map_earnings_to_trading, _safe_float
+from backend.core.event_detector import (
+    _map_earnings_to_trading,
+    eps_surprise_pct_from_raw,
+)
 
 _RESULT_COLUMNS = [
     "date", "event_type", "symbol",
@@ -255,19 +258,11 @@ class FeatureBuilder:
                     symbol, len(df), len(earnings_df), len(earning_day_set))
 
         # ── Calcular eps_surprise_pct por día de earning ─────────────────────
-        def _calc_eps_surprise(row_data: dict) -> float | None:
-            # surprise_pct de yfinance ya viene calculado (en %); convertir a decimal
-            s = _safe_float(row_data.get("surprise_pct"))
-            if s is not None:
-                return s / 100.0
-            a = _safe_float(row_data.get("eps_actual"))
-            e = _safe_float(row_data.get("eps_estimate"))
-            if a is not None and e is not None and e != 0:
-                return (a - e) / abs(e)
-            return None
-
         eps_map: dict[pd.Timestamp, float | None] = {
-            ts: _calc_eps_surprise(data) for ts, data in earning_map.items()
+            ts: eps_surprise_pct_from_raw(
+                data.get("surprise_pct"), data.get("eps_actual"), data.get("eps_estimate")
+            )
+            for ts, data in earning_map.items()
         }
 
         # ── Construir filas (una por barra OHLCV) ───────────────────────────

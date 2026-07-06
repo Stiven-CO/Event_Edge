@@ -12,13 +12,33 @@ Assumptions:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from backend.api.schemas import EventRecord, EventType, GuidanceDirection
 
 logger = logging.getLogger(__name__)
+
+_NY_TZ = ZoneInfo("America/New_York")
+_MARKET_CLOSE = time(16, 0)  # 16:00 ET
+
+
+def resolve_earnings_effective_date(report_ts: pd.Timestamp) -> pd.Timestamp:
+    """
+    Resuelve la fecha (medianoche UTC) a partir de la cual se busca la sesión
+    de trading para un reporte de earnings.
+
+    Si la hora local (ET) del reporte es posterior al cierre de mercado
+    (16:00 ET), el evento se desplaza al día calendario siguiente antes del
+    forward-fill de sesión (BMO / horario normal no cambian).
+    """
+    local = pd.Timestamp(report_ts).tz_convert(_NY_TZ)
+    effective_date = local.date()
+    if local.time() > _MARKET_CLOSE:
+        effective_date = effective_date + timedelta(days=1)
+    return pd.Timestamp(effective_date, tz=_NY_TZ).tz_convert("UTC")
 
 
 class EventDetector:
@@ -57,7 +77,7 @@ class EventDetector:
         sorted_earnings = earnings_df.sort_index(ascending=True)
 
         for earnings_ts, row in sorted_earnings.iterrows():
-            earnings_ts = pd.Timestamp(earnings_ts).normalize().tz_convert("UTC")
+            earnings_ts = resolve_earnings_effective_date(earnings_ts)
 
             # Buscar la primera fecha de trading >= earnings_ts
             candidates = trading_dates[trading_dates >= earnings_ts]
@@ -103,13 +123,9 @@ class EventDetector:
 
             eps_actual = _safe_float(row.get("eps_actual"))
             eps_estimate = _safe_float(row.get("eps_estimate"))
-            # surprise_pct de yfinance está en %; convertir a decimal (0.0452 para 4.52%)
-            surprise_raw = _safe_float(row.get("surprise_pct"))
-            eps_surprise_pct: float | None = None
-            if surprise_raw is not None:
-                eps_surprise_pct = surprise_raw / 100.0
-            elif eps_actual is not None and eps_estimate is not None and eps_estimate != 0:
-                eps_surprise_pct = (eps_actual - eps_estimate) / abs(eps_estimate)
+            eps_surprise_pct = eps_surprise_pct_from_raw(
+                row.get("surprise_pct"), eps_actual, eps_estimate
+            )
 
             records.append(
                 EventRecord(
@@ -210,7 +226,7 @@ def _map_earnings_to_trading(
     mapping: dict[pd.Timestamp, dict] = {}
 
     for earnings_ts, row in earnings_df.sort_index(ascending=True).iterrows():
-        earnings_ts = pd.Timestamp(earnings_ts).normalize().tz_convert("UTC")
+        earnings_ts = resolve_earnings_effective_date(earnings_ts)
         candidates = trading_dates[trading_dates >= earnings_ts]
         if candidates.empty:
             continue
@@ -243,3 +259,17 @@ def _safe_float(value: object) -> float | None:
         return None if pd.isna(f) else f
     except (TypeError, ValueError):
         return None
+
+
+def eps_surprise_pct_from_raw(
+    surprise_raw: object, eps_actual: object, eps_estimate: object,
+) -> float | None:
+    """surprise_pct de yfinance viene en %; se normaliza a decimal (0.0452 = 4.52%)."""
+    s = _safe_float(surprise_raw)
+    if s is not None:
+        return s / 100.0
+    a = _safe_float(eps_actual)
+    e = _safe_float(eps_estimate)
+    if a is not None and e is not None and e != 0:
+        return (a - e) / abs(e)
+    return None
