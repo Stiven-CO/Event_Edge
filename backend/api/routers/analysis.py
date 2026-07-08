@@ -7,6 +7,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 
 import numpy as np
+from scipy import stats as scipy_stats
 
 logger = logging.getLogger(__name__)
 from backend.api.schemas import (
@@ -63,6 +64,7 @@ async def informative_analysis(
             asset_class=req.asset_class,
             mdh_client=mdh_client,
             ohlcv_source=req.ohlcv_source,
+            timeframe=req.timeframe,
         )
         if ohlcv_df.empty:
             raise HTTPException(
@@ -107,6 +109,7 @@ async def probabilistic_analysis(
             date_end=req.date_range_end,
             ohlcv_source=req.ohlcv_source,
             credentials_account=req.credentials_account,
+            timeframe=req.timeframe,
         )
         if ohlcv_df.empty:
             raise HTTPException(
@@ -122,14 +125,14 @@ async def probabilistic_analysis(
             earnings_df, earnings_info = await _fetch_earnings_safe(req.symbol, mdh_client)
             logger.info("[probabilistic] %s | OHLCV: %d barras | %s", req.symbol, len(ohlcv_df), earnings_info)
             features_df = feature_builder.build_from_fundamental_context(
-                ohlcv_df, earnings_df, symbol=req.symbol
+                ohlcv_df, earnings_df, symbol=req.symbol, timeframe=req.timeframe
             )
             features_df = _filter_features_by_date(features_df, req.date_range_start, req.date_range_end)
             n_total = len(features_df)
             n_earning_days = int(features_df["take_earnings"].sum()) if not features_df.empty else 0
             logger.info("[probabilistic] %s | features: %d filas | earning days: %d", req.symbol, n_total, n_earning_days)
         else:
-            features_df = feature_builder.build_all_bars(ohlcv_df, symbol=req.symbol)
+            features_df = feature_builder.build_all_bars(ohlcv_df, symbol=req.symbol, timeframe=req.timeframe)
             n_total = len(features_df)
 
         conditioned_df = apply_conditioning(features_df, req.conditioning)
@@ -189,6 +192,7 @@ async def conditioning_count(
             date_end=req.date_range_end,
             ohlcv_source=req.ohlcv_source,
             credentials_account=req.credentials_account,
+            timeframe=req.timeframe,
         )
         if ohlcv_df.empty:
             raise HTTPException(
@@ -202,7 +206,7 @@ async def conditioning_count(
             earnings_df, earnings_info = await _fetch_earnings_safe(req.symbol, mdh_client)
             logger.info("[conditioning-count] %s | OHLCV: %d barras | %s", req.symbol, len(ohlcv_df), earnings_info)
             features_df = feature_builder.build_from_fundamental_context(
-                ohlcv_df, earnings_df, symbol=req.symbol
+                ohlcv_df, earnings_df, symbol=req.symbol, timeframe=req.timeframe
             )
             features_df = _filter_features_by_date(features_df, req.date_range_start, req.date_range_end)
             n_earning_days = int(features_df["take_earnings"].sum()) if not features_df.empty else 0
@@ -212,7 +216,7 @@ async def conditioning_count(
             )
             logger.info("[conditioning-count] %s | features: %d filas | earning days: %d", req.symbol, len(features_df), n_earning_days)
         else:
-            features_df = feature_builder.build_all_bars(ohlcv_df, symbol=req.symbol)
+            features_df = feature_builder.build_all_bars(ohlcv_df, symbol=req.symbol, timeframe=req.timeframe)
 
         conditioned_df = apply_conditioning(features_df, req.conditioning)
         logger.info("[conditioning-count] %s | condicionados: %d / %d", req.symbol, len(conditioned_df), len(features_df))
@@ -272,8 +276,8 @@ def _row_to_bar(row) -> ConditionedBar:
         price_vs_ema50_pct=_safe_float(row.get("price_vs_ema50_pct")),
         trend_direction=_enum_val(row.get("trend_direction")),
         # B - Momentum
-        return_5d=_safe_float(row.get("return_5d")),
-        return_20d=_safe_float(row.get("return_20d")),
+        return_5p=_safe_float(row.get("return_5p")),
+        return_20p=_safe_float(row.get("return_20p")),
         rsi14=_safe_float(row.get("rsi14")),
         # C - Sobreextensión
         bb_position=_enum_val(row.get("bb_position")),
@@ -321,6 +325,10 @@ def _build_conditioned_summary(
             event_day_volume_mean=None, event_day_volume_std=None,
             event_day_return_mean=None, event_day_return_std=None,
             avg_forward_return={},
+            return_max=None, return_min=None,
+            return_avg_positive=None, return_avg_negative=None,
+            return_count_positive=0, return_count_negative=0,
+            return_skewness=None, return_kurtosis=None,
             return_samples_close=[],
             return_samples_gap=[],
         )
@@ -374,6 +382,28 @@ def _build_conditioned_summary(
         a = np.array(arr, dtype=float)
         return float(np.mean(a)), float(np.std(a, ddof=1)) if len(a) > 1 else 0.0
 
+    def _extended_stats(arr: list[float]) -> dict:
+        if not arr:
+            return {
+                "max": None, "min": None,
+                "avg_positive": None, "avg_negative": None,
+                "count_positive": 0, "count_negative": 0,
+                "skewness": None, "kurtosis": None,
+            }
+        a = np.array(arr, dtype=float)
+        pos = a[a > 0]
+        neg = a[a < 0]
+        return {
+            "max": float(np.max(a)),
+            "min": float(np.min(a)),
+            "avg_positive": float(np.mean(pos)) if pos.size > 0 else None,
+            "avg_negative": float(np.mean(neg)) if neg.size > 0 else None,
+            "count_positive": int(pos.size),
+            "count_negative": int(neg.size),
+            "skewness": float(scipy_stats.skew(a)) if a.size >= 3 else None,
+            "kurtosis": float(scipy_stats.kurtosis(a)) if a.size >= 4 else None,
+        }
+
     range_mean, range_std   = _s(ranges)
     vol_mean, vol_std       = _s(volumes)
     ret_mean, ret_std       = _s(ev_returns)
@@ -410,6 +440,8 @@ def _build_conditioned_summary(
 
     return_samples_gap = [float(v) for v in conditioned_df["gap_pct"].dropna() if v != 0.0]
 
+    ext = _extended_stats(return_samples_close)
+
     return ConditionedSummary(
         n_conditioned_events=n_cond,
         n_total_events=n_total_events,
@@ -425,6 +457,14 @@ def _build_conditioned_summary(
         event_day_return_mean=ret_mean,
         event_day_return_std=ret_std,
         avg_forward_return=avg_forward_return,
+        return_max=ext["max"],
+        return_min=ext["min"],
+        return_avg_positive=ext["avg_positive"],
+        return_avg_negative=ext["avg_negative"],
+        return_count_positive=ext["count_positive"],
+        return_count_negative=ext["count_negative"],
+        return_skewness=ext["skewness"],
+        return_kurtosis=ext["kurtosis"],
         return_samples_close=return_samples_close,
         return_samples_gap=return_samples_gap,
     )
@@ -448,14 +488,14 @@ def apply_conditioning(df: pd.DataFrame, cond: ConditioningParams) -> pd.DataFra
         f = f[f["trend_direction"].map(lambda x: getattr(x, "value", x)).isin(allowed)]
 
     # ── B: Momentum ───────────────────────────────────────────────────────────
-    if cond.return_5d_min is not None:
-        f = f[f["return_5d"] >= cond.return_5d_min]
-    if cond.return_5d_max is not None:
-        f = f[f["return_5d"] <= cond.return_5d_max]
-    if cond.return_20d_min is not None:
-        f = f[f["return_20d"] >= cond.return_20d_min]
-    if cond.return_20d_max is not None:
-        f = f[f["return_20d"] <= cond.return_20d_max]
+    if cond.return_5p_min is not None:
+        f = f[f["return_5p"] >= cond.return_5p_min]
+    if cond.return_5p_max is not None:
+        f = f[f["return_5p"] <= cond.return_5p_max]
+    if cond.return_20p_min is not None:
+        f = f[f["return_20p"] >= cond.return_20p_min]
+    if cond.return_20p_max is not None:
+        f = f[f["return_20p"] <= cond.return_20p_max]
     if cond.rsi14_min is not None:
         f = f[f["rsi14"] >= cond.rsi14_min]
     if cond.rsi14_max is not None:
@@ -549,6 +589,7 @@ async def _load_ohlcv(
     date_end: pd.Timestamp | None = None,
     ohlcv_source: str | None = None,
     credentials_account: str | None = None,
+    timeframe: str = "1d",
 ) -> tuple[pd.DataFrame, str]:
     """
     Carga OHLCV completo exclusivamente via MDH (layer=curated, complete_historical).
@@ -570,7 +611,7 @@ async def _load_ohlcv(
             symbol=symbol,
             source=resolved_source,
             asset_class=resolved_asset_class,
-            timeframe="1d",
+            timeframe=timeframe,
             start=date_start,
             end=date_end,
         )
@@ -587,7 +628,7 @@ async def _load_ohlcv(
             symbol=symbol,
             source=resolved_source,
             asset_class=resolved_asset_class,
-            timeframe="1d",
+            timeframe=timeframe,
             type_saved="complete_historical",
             credentials_account=credentials_account,
         )
@@ -605,7 +646,7 @@ async def _load_ohlcv(
             symbol=symbol,
             source=resolved_source,
             asset_class=resolved_asset_class,
-            timeframe="1d",
+            timeframe=timeframe,
             start=date_start,
             end=date_end,
         )

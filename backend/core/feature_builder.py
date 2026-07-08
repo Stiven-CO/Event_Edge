@@ -7,7 +7,7 @@ Regla anti-look-ahead:
 
 Clusters:
     A - Tendencia:      ema5_vs_ema20_ratio, price_vs_ema50_pct, trend_direction
-    B - Momentum:       return_5d, return_20d, rsi14
+    B - Momentum:       return_5p, return_20p, rsi14
     C - Sobreextensión: bb_position, bb_width_pct, rsi14_zone
     D - Volatilidad:    hist_vol_10d, vol_ratio_10_30, atr_pct, vol_regime
     E - Fundamental:    eps_surprise_pct, guidance  (solo path earnings)
@@ -44,6 +44,18 @@ from backend.core.event_detector import (
     eps_surprise_pct_from_raw,
 )
 
+_BARS_PER_YEAR: dict[str, float] = {
+    "1m":  252 * 390,
+    "5m":  252 * 78,
+    "15m": 252 * 26,
+    "30m": 252 * 13,
+    "1h":  252 * 6.5,
+    "4h":  252 * 1.625,
+    "1d":  252,
+    "1w":  52,
+    "1mo": 12,
+}
+
 _RESULT_COLUMNS = [
     "date", "event_type", "symbol",
     # Base cruda (OHLCV)
@@ -55,7 +67,7 @@ _RESULT_COLUMNS = [
     # A - Tendencia
     "ema5_vs_ema20_ratio", "price_vs_ema50_pct", "trend_direction",
     # B - Momentum
-    "return_5d", "return_20d", "rsi14",
+    "return_5p", "return_20p", "rsi14",
     # C - Sobreextensión
     "bb_position", "bb_width_pct", "rsi14_zone",
     # D - Volatilidad
@@ -73,6 +85,7 @@ class FeatureBuilder:
         self,
         ohlcv_df: pd.DataFrame,
         symbol: str = "",
+        timeframe: str = "1d",
     ) -> pd.DataFrame:
         """
         Retorna DataFrame con _RESULT_COLUMNS, una fila por barra OHLCV.
@@ -92,8 +105,8 @@ class FeatureBuilder:
         s_return_20d     = self._calc_return_nd(df, 20)
         s_rsi14          = self._calc_rsi(df, 14)
         s_bb_position, s_bb_width = self._calc_bb_features(df)
-        s_hist_vol_10d   = self._calc_hist_vol(df, 10)
-        s_hist_vol_30d   = self._calc_hist_vol(df, 30)
+        s_hist_vol_10d   = self._calc_hist_vol(df, 10, timeframe)
+        s_hist_vol_30d   = self._calc_hist_vol(df, 30, timeframe)
         s_atr_pct        = self._calc_atr_pct(df, 14)
 
         # gap_pct por barra: (open[t] - close[t-1]) / close[t-1]
@@ -159,8 +172,8 @@ class FeatureBuilder:
                 "ema5_vs_ema20_ratio": s_ema5_vs_ema20.values,
                 "price_vs_ema50_pct":  s_price_vs_ema50.values,
                 "trend_direction":     s_trend_dir.values,
-                "return_5d":           s_return_5d.values,
-                "return_20d":          s_return_20d.values,
+                "return_5p":           s_return_5d.values,
+                "return_20p":          s_return_20d.values,
                 "rsi14":               s_rsi14.values,
                 "bb_position":         s_bb_position.values,
                 "bb_width_pct":        s_bb_width.values,
@@ -187,6 +200,7 @@ class FeatureBuilder:
         ohlcv_df: pd.DataFrame,
         earnings_df: pd.DataFrame,
         symbol: str = "",
+        timeframe: str = "1d",
     ) -> pd.DataFrame:
         """
         Pipeline fundamental: OHLCV + earnings → dataset completo con máscara de earning day.
@@ -217,8 +231,8 @@ class FeatureBuilder:
         s_return_20d     = self._calc_return_nd(df, 20)
         s_rsi14          = self._calc_rsi(df, 14)
         s_bb_position, s_bb_width = self._calc_bb_features(df)
-        s_hist_vol_10d   = self._calc_hist_vol(df, 10)
-        s_hist_vol_30d   = self._calc_hist_vol(df, 30)
+        s_hist_vol_10d   = self._calc_hist_vol(df, 10, timeframe)
+        s_hist_vol_30d   = self._calc_hist_vol(df, 30, timeframe)
         s_atr_pct        = self._calc_atr_pct(df, 14)
 
         gap_pct_series = (
@@ -309,8 +323,8 @@ class FeatureBuilder:
                 "ema5_vs_ema20_ratio": s_ema5_vs_ema20.values,
                 "price_vs_ema50_pct":  s_price_vs_ema50.values,
                 "trend_direction":     s_trend_dir.values,
-                "return_5d":           s_return_5d.values,
-                "return_20d":          s_return_20d.values,
+                "return_5p":           s_return_5d.values,
+                "return_20p":          s_return_20d.values,
                 "rsi14":               s_rsi14.values,
                 "bb_position":         s_bb_position.values,
                 "bb_width_pct":        s_bb_width.values,
@@ -377,7 +391,7 @@ class FeatureBuilder:
         prev   = df["close"].shift(1)
         prev_n = df["close"].shift(1 + n)
         pct    = (prev - prev_n) / prev_n * 100
-        return pct.replace([np.inf, -np.inf], np.nan).rename(f"return_{n}d")
+        return pct.replace([np.inf, -np.inf], np.nan).rename(f"return_{n}p")
 
     def _calc_rsi(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """RSI(period) calculado en T-1 (anti-look-ahead)."""
@@ -437,10 +451,11 @@ class FeatureBuilder:
 
     # ── Cluster D — Volatilidad ──────────────────────────────────────────────
 
-    def _calc_hist_vol(self, df: pd.DataFrame, window: int) -> pd.Series:
-        """Volatilidad histórica anualizada (%) = std(log_ret[-window:]) × √252 × 100, shifteada T-1."""
+    def _calc_hist_vol(self, df: pd.DataFrame, window: int, timeframe: str = "1d") -> pd.Series:
+        """Volatilidad histórica anualizada (%) = std(log_ret[-window:]) × √bars_per_year × 100, shifteada T-1."""
         log_ret = np.log(df["close"] / df["close"].shift(1))
-        hv = log_ret.rolling(window=window, min_periods=window).std() * math.sqrt(252) * 100
+        ann = math.sqrt(_BARS_PER_YEAR.get(timeframe, 252))
+        hv = log_ret.rolling(window=window, min_periods=window).std() * ann * 100
         return hv.shift(1).rename(f"hist_vol_{window}d")
 
     def _calc_atr_pct(self, df: pd.DataFrame, period: int = 14) -> pd.Series:

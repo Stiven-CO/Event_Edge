@@ -22,7 +22,7 @@ export type TypeData  = "ohlcv" | "fundamental" | "macro";
 export type TypeSaved = "complete_historical" | "specific_event";
 
 export const ASSET_CLASS_OPTIONS: Record<TypeData, string[]> = {
-  ohlcv:       ["equity", "forex", "crypto", "indices", "commodities"],
+  ohlcv:       ["equity", "forex", "crypto", "index", "commodities"],
   fundamental: ["earnings"],
   macro:       ["economics"],
 };
@@ -69,6 +69,9 @@ interface EventEdgeState {
   eventType: EventType;
   model: ModelType;
   nPeriods: number;
+  // ── Price Action params ───────────────────────────────────────────────────
+  priceActionMode: "holding" | "in_event";
+  priceActionEventTF: string;
   gapThreshold: number;
   includeEarningsDays: boolean | null;
   bins: number[];
@@ -103,6 +106,8 @@ interface EventEdgeState {
   setEventType: (t: EventType) => void;
   setModel: (m: ModelType) => void;
   setNPeriods: (n: number) => void;
+  setPriceActionMode: (m: "holding" | "in_event") => void;
+  setPriceActionEventTF: (tf: string) => void;
   setGapThreshold: (t: number) => void;
   setIncludeEarningsDays: (v: boolean | null) => void;
   setBins: (b: number[]) => void;
@@ -145,6 +150,8 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   eventType: "earnings",
   model: "bootstrap",
   nPeriods: 5,
+  priceActionMode: "holding",
+  priceActionEventTF: "30m",
   gapThreshold: 1.0,
   includeEarningsDays: null,
   bins: [-0.05, -0.01, 0.01, 0.05],
@@ -177,7 +184,8 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
     const firstClass = ASSET_CLASS_OPTIONS[typeData][0];
     const autoEventType = typeData === "fundamental" ? ("earnings" as EventType) : get().eventType;
     set({ typeData, assetClass: firstClass, eventType: autoEventType,
-          events: [], globalMetrics: null, probabilisticResult: null });
+          events: [], globalMetrics: null, probabilisticResult: null,
+          conditioningCount: null, infoMessage: null });
   },
   setAssetClass: (assetClass) => set({ assetClass }),
   setTimeframe: (timeframe) => set({ timeframe }),
@@ -185,6 +193,8 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   setEventType: (eventType) => set({ eventType, globalMetrics: null, probabilisticResult: null, error: null, infoMessage: null }),
   setModel: (model) => set({ model }),
   setNPeriods: (nPeriods) => set({ nPeriods: Math.max(0, Math.min(60, Math.trunc(nPeriods))) }),
+  setPriceActionMode: (priceActionMode) => set({ priceActionMode }),
+  setPriceActionEventTF: (priceActionEventTF) => set({ priceActionEventTF }),
   setGapThreshold: (gapThreshold) => set({ gapThreshold: Math.max(0.1, Math.min(20, Number.isFinite(gapThreshold) ? gapThreshold : 1.0)) }),
   setIncludeEarningsDays: (includeEarningsDays) => set({ includeEarningsDays }),
   setBins: (bins) => set({ bins }),
@@ -209,6 +219,17 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
     const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, dateStart, dateEnd, gapThreshold, includeEarningsDays, assetClass } = get();
     set({ isLoadingEvents: true, error: null, infoMessage: null });
     try {
+      if (typeData !== "fundamental") {
+        const assetInfo = await endpoints.getAssetInfo(symbol).catch(() => null);
+        set({
+          events: [],
+          companyName: assetInfo?.short_name || "",
+          isLoadingEvents: false,
+          globalMetrics: null,
+          probabilisticResult: null,
+        });
+        return;
+      }
       const [events, assetInfo] = await Promise.allSettled([
         endpoints.detectEvents({
           symbol,
@@ -240,13 +261,14 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   },
 
   fetchGlobalMetrics: async () => {
-    const { symbol, source, ohlcvSource, typeData, assetClass } = get();
+    const { symbol, source, ohlcvSource, typeData, assetClass, timeframe } = get();
     set({ isLoadingGlobal: true, error: null, infoMessage: null });
     try {
       const globalMetrics = await endpoints.getGlobalMetrics({
         symbol,
         source,
         asset_class: assetClass,
+        timeframe,
         ...(typeData === "fundamental" ? { ohlcv_source: ohlcvSource } : {}),
       });
       set({ globalMetrics, isLoadingGlobal: false });
@@ -259,7 +281,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   },
 
   fetchConditionedAnalysis: async () => {
-    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, model, nPeriods, gapThreshold, includeEarningsDays, bins, conditioning, dateStart, dateEnd, assetClass } = get();
+    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, model, nPeriods, priceActionMode, gapThreshold, includeEarningsDays, bins, conditioning, dateStart, dateEnd, assetClass, timeframe } = get();
     set({ isLoadingMetrics: true, error: null, infoMessage: null });
     // Path OHLCV-all-bars cuando typeData !== "fundamental"; path earnings solo en fundamental
     const resolvedEventType = typeData === "fundamental" ? eventType : null;
@@ -268,10 +290,11 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         symbol,
         source,
         asset_class: assetClass,
+        timeframe,
         ...(typeData === "fundamental" ? { ohlcv_source: ohlcvSource } : {}),
         event_type: resolvedEventType,
         model,
-        n_periods: nPeriods,
+        n_periods: priceActionMode === "holding" ? nPeriods : 0,
         bins,
         gap_threshold_pct: gapThreshold,
         include_earnings_days: resolvedEventType === "gap" ? includeEarningsDays : null,
@@ -291,7 +314,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   },
 
   fetchConditioningCount: async () => {
-    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, gapThreshold, includeEarningsDays, conditioning, dateStart, dateEnd, assetClass } = get();
+    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, gapThreshold, includeEarningsDays, conditioning, dateStart, dateEnd, assetClass, timeframe } = get();
     set({ isLoadingConditioningCount: true, error: null, infoMessage: null });
     const resolvedEventType = typeData === "fundamental" ? eventType : null;
     try {
@@ -299,6 +322,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         symbol,
         source,
         asset_class: assetClass,
+        timeframe,
         ...(typeData === "fundamental" ? { ohlcv_source: ohlcvSource } : {}),
         event_type: resolvedEventType,
         gap_threshold_pct: gapThreshold,
@@ -322,7 +346,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   },
 
   fetchPriceAction: async () => {
-    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, nPeriods, conditioning, gapThreshold, includeEarningsDays, dateStart, dateEnd, assetClass } = get();
+    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, conditioning, gapThreshold, includeEarningsDays, dateStart, dateEnd, assetClass, timeframe, nPeriods, priceActionMode, priceActionEventTF } = get();
     set({ isLoadingPriceAction: true, infoMessage: null });
     const resolvedEventType = typeData === "fundamental" ? eventType : null;
     try {
@@ -330,11 +354,14 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         symbol,
         source,
         asset_class: assetClass,
+        timeframe,
         ...(typeData === "fundamental" ? { ohlcv_source: ohlcvSource } : {}),
         event_type: resolvedEventType,
         gap_threshold_pct: gapThreshold,
         include_earnings_days: resolvedEventType === "gap" ? includeEarningsDays : null,
-        n_periods: nPeriods,
+        n_periods: priceActionMode === "holding" ? nPeriods : 0,
+        price_action_mode: priceActionMode,
+        event_timeframe: priceActionEventTF,
         include_bands: true,
         conditioning: _normalizeConditioning(conditioning),
         ...(dateStart ? { date_range_start: dateStart } : {}),

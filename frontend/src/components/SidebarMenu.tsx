@@ -11,6 +11,7 @@ import { useEvents } from "@/hooks/useEvents";
 import {
   ASSET_CLASS_OPTIONS,
   SOURCE_OPTIONS,
+  TIMEFRAME_OPTIONS,
   type DataSource,
   type TypeData,
   useEventEdgeStore,
@@ -146,14 +147,17 @@ export function SidebarMenu() {
   const error        = useEventEdgeStore((s) => s.error);
   const typeData     = useEventEdgeStore((s) => s.typeData);
   const assetClass   = useEventEdgeStore((s) => s.assetClass);
+  const timeframe    = useEventEdgeStore((s) => s.timeframe);
   const eventType    = useEventEdgeStore((s) => s.eventType);
   const model        = useEventEdgeStore((s) => s.model);
-  const nPeriods     = useEventEdgeStore((s) => s.nPeriods);
+  const nPeriods           = useEventEdgeStore((s) => s.nPeriods);
+  const priceActionMode    = useEventEdgeStore((s) => s.priceActionMode);
   const bins         = useEventEdgeStore((s) => s.bins);
   const conditioning = useEventEdgeStore((s) => s.conditioning);
   const dateStart    = useEventEdgeStore((s) => s.dateStart);
   const dateEnd      = useEventEdgeStore((s) => s.dateEnd);
-  const events       = useEventEdgeStore((s) => s.events);
+  const events         = useEventEdgeStore((s) => s.events);
+  const globalMetrics  = useEventEdgeStore((s) => s.globalMetrics);
   const probabilisticResult = useEventEdgeStore((s) => s.probabilisticResult);
 
   // ── Store write ──────────────────────────────────────────────────────────────
@@ -163,8 +167,10 @@ export function SidebarMenu() {
   const setOhlcvSource  = useEventEdgeStore((s) => s.setOhlcvSource);
   const setTypeData     = useEventEdgeStore((s) => s.setTypeData);
   const setAssetClass   = useEventEdgeStore((s) => s.setAssetClass);
-  const setModel        = useEventEdgeStore((s) => s.setModel);
-  const setNPeriods     = useEventEdgeStore((s) => s.setNPeriods);
+  const setTimeframe    = useEventEdgeStore((s) => s.setTimeframe);
+  const setModel              = useEventEdgeStore((s) => s.setModel);
+  const setNPeriods           = useEventEdgeStore((s) => s.setNPeriods);
+  const setPriceActionMode    = useEventEdgeStore((s) => s.setPriceActionMode);
   const setBins         = useEventEdgeStore((s) => s.setBins);
   const setConditioning = useEventEdgeStore((s) => s.setConditioning);
   const resetConditioning = useEventEdgeStore((s) => s.resetConditioning);
@@ -303,6 +309,19 @@ export function SidebarMenu() {
             </select>
           </div>
 
+          <div>
+            <FieldLabel>Timeframe</FieldLabel>
+            <select
+              className="input mt-1"
+              value={timeframe}
+              onChange={(e) => setTimeframe(e.target.value)}
+            >
+              {TIMEFRAME_OPTIONS.map((tf) => (
+                <option key={tf} value={tf}>{tf}</option>
+              ))}
+            </select>
+          </div>
+
           <div className="grid grid-cols-2 gap-2">
             <div>
               <FieldLabel>Desde</FieldLabel>
@@ -329,7 +348,7 @@ export function SidebarMenu() {
             {isLoadingEvents ? "Buscando..." : "Buscar"}
           </button>
 
-          {events.length > 0 && !isLoadingEvents && (
+          {typeData === "fundamental" && events.length > 0 && !isLoadingEvents && (
             <div className="rounded border border-status-success/30 bg-status-success/8 p-2 text-xs space-y-0.5">
               <p className="font-semibold text-ink-primary">
                 {symbol}{companyName ? ` · ${companyName}` : ""}
@@ -337,6 +356,16 @@ export function SidebarMenu() {
               <p className="text-ink-muted">{events.length} eventos encontrados</p>
               <p className="font-mono text-ink-muted">
                 {events[0].date.slice(0, 10)} → {events[events.length - 1].date.slice(0, 10)}
+              </p>
+            </div>
+          )}
+          {typeData !== "fundamental" && globalMetrics != null && !isLoadingGlobal && (
+            <div className="rounded border border-status-success/30 bg-status-success/8 p-2 text-xs space-y-0.5">
+              <p className="font-semibold text-ink-primary">
+                {symbol}{companyName ? ` · ${companyName}` : ""}
+              </p>
+              <p className="font-mono text-ink-muted">
+                {globalMetrics.date_start.slice(0, 10)} → {globalMetrics.date_end.slice(0, 10)}
               </p>
             </div>
           )}
@@ -377,12 +406,12 @@ export function SidebarMenu() {
           </Accordion>
 
           <Accordion title="B · Momentum">
-            <RangeRow label="Retorno 5 sesiones %" min={-30} max={30}
-              value={{ min: localCond.return_5d_min, max: localCond.return_5d_max }}
-              onChange={(r) => setLocalCond(updateRange(localCond, "return_5d_min", "return_5d_max", r))} />
-            <RangeRow label="Retorno 20 sesiones %" min={-40} max={40}
-              value={{ min: localCond.return_20d_min, max: localCond.return_20d_max }}
-              onChange={(r) => setLocalCond(updateRange(localCond, "return_20d_min", "return_20d_max", r))} />
+            <RangeRow label="Retorno 5 períodos %" min={-30} max={30}
+              value={{ min: localCond.return_5p_min, max: localCond.return_5p_max }}
+              onChange={(r) => setLocalCond(updateRange(localCond, "return_5p_min", "return_5p_max", r))} />
+            <RangeRow label="Retorno 20 períodos %" min={-40} max={40}
+              value={{ min: localCond.return_20p_min, max: localCond.return_20p_max }}
+              onChange={(r) => setLocalCond(updateRange(localCond, "return_20p_min", "return_20p_max", r))} />
             <RangeRow label="RSI(14)" min={0} max={100}
               value={{ min: localCond.rsi14_min, max: localCond.rsi14_max }}
               onChange={(r) => setLocalCond(updateRange(localCond, "rsi14_min", "rsi14_max", r))} />
@@ -512,6 +541,48 @@ export function SidebarMenu() {
         {/* ════════════════ PASO 4 · ANÁLISIS PROBABILÍSTICO ═════════════════ */}
         <Accordion title="Análisis Probabilístico">
 
+          {/* ── Price Action ─────────────────────────────────────────────── */}
+          <p className="text-xs font-semibold text-ink-primary uppercase tracking-wide">
+            Price Action
+          </p>
+
+          <div className="flex gap-1">
+            {(["holding", "in_event"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`flex-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
+                  priceActionMode === m
+                    ? "bg-accent text-white"
+                    : "bg-surface-subtle text-ink-muted hover:bg-surface"
+                }`}
+                onClick={() => setPriceActionMode(m)}
+              >
+                {m === "holding" ? "Holding" : "Inside Event"}
+              </button>
+            ))}
+          </div>
+
+          {priceActionMode === "holding" && (
+            <div>
+              <FieldLabel>Horizonte (períodos)</FieldLabel>
+              <p className="mt-0.5 text-xs text-ink-muted">Barras forward P1…Pn · usa el timeframe del análisis</p>
+              <div className="mt-2 flex items-center gap-2">
+                <input type="range" min={1} max={60} value={nPeriods}
+                  onChange={(e) => setNPeriods(Number(e.target.value))}
+                  className="w-full accent-accent" />
+                <input type="number" min={1} max={60} value={nPeriods}
+                  onChange={(e) => setNPeriods(Math.max(1, Math.min(60, Number(e.target.value) || 1)))}
+                  className="input w-14 text-center" />
+              </div>
+            </div>
+          )}
+
+          {/* ── Probabilístico ───────────────────────────────────────────── */}
+          <p className="text-xs font-semibold text-ink-primary uppercase tracking-wide mt-2">
+            Probabilístico
+          </p>
+
           <div>
             <FieldLabel>Modelo</FieldLabel>
             <select className="input mt-1" value={model}
@@ -522,19 +593,6 @@ export function SidebarMenu() {
               <option value="bayesian">Bayesian</option>
             </select>
             <p className="mt-1 text-xs text-ink-muted">{modelDescriptions[model]}</p>
-          </div>
-
-          <div>
-            <FieldLabel>Horizonte (sesiones)</FieldLabel>
-            <p className="mt-0.5 text-xs text-ink-muted">0 = intradía del evento</p>
-            <div className="mt-2 flex items-center gap-2">
-              <input type="range" min={0} max={60} value={nPeriods}
-                onChange={(e) => setNPeriods(Number(e.target.value))}
-                className="w-full accent-accent" />
-              <input type="number" min={0} max={60} value={nPeriods}
-                onChange={(e) => setNPeriods(Math.max(0, Math.min(60, Number(e.target.value) || 0)))}
-                className="input w-16 text-center" />
-            </div>
           </div>
 
           <div>

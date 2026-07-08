@@ -7,37 +7,44 @@ import { useEventEdgeStore } from "@/store/eventEdgeStore";
 type FamilyKey = "close_return" | "gap_fill";
 
 // ── Descripciones de cada característica de estudio ──────────────────────────
-const familyInfo: Record<"gap_fill", { label: string; formula: string; description: string }> = {
-  gap_fill: {
-    label: "Gap Fill",
-    formula: "P(precio toca prev_close dentro de Pn sesiones)",
-    description:
-      "Probabilidad de que el precio regrese a cerrar el gap del evento dentro de N sesiones. El gap se considera cerrado cuando el precio toca o supera el cierre previo (prev_close).",
-  },
-};
-
-function getCloseReturnInfo(nPeriods: number) {
-  if (nPeriods === 0) {
+function getCloseReturnInfo(mode: "holding" | "in_event") {
+  if (mode === "in_event") {
     return {
       label: "Close Return",
       formula: "(close_P0 − open_P0) / open_P0",
       description:
-        "Retorno intradía del evento. Mide el movimiento desde la apertura del día del evento (P0) hasta su cierre (P0).",
+        "Retorno acumulado desde el open del día del evento (P0) hasta el cierre del evento. Pide el retorno en el día del evento.",
     };
   }
-
   return {
     label: "Close Return",
     formula: "(close_Pn − close_P0) / close_P0",
     description:
-      "Retorno acumulado desde el cierre del día del evento (P0) hasta el cierre de la sesión Pn. Excluye el gap de apertura y mide el movimiento post-evento.",
+      "Retorno acumulado desde el cierre del día del evento (P0) hasta el cierre de la sesión Pn. Excluye el gap de apertura y retorno del evento en sección regular, mide el movimiento post-evento.",
+  };
+}
+
+function getGapFillInfo(mode: "holding" | "in_event") {
+  if (mode === "in_event") {
+    return {
+      label: "Gap Fill",
+      formula: 'P(precio toca prev_close dentro de P0 "El evento")',
+      description:
+        "Probabilidad de que el precio regrese a cerrar el gap del evento dentro del periodo del evento P0. El gap se considera cerrado cuando el precio (high o low) toca o supera el cierre previo (prev_close).",
+    };
+  }
+  return {
+    label: "Gap Fill",
+    formula: "P(precio toca prev_close dentro de Pn sesiones)",
+    description:
+      "Probabilidad de que el precio regrese a cerrar el gap del evento dentro de N sesiones. El gap se considera cerrado cuando el precio toca o supera el cierre previo (prev_close).",
   };
 }
 
 // ── InfoBox colapsable ────────────────────────────────────────────────────────
-function FamilyInfoBox({ family, nPeriods }: { family: FamilyKey; nPeriods: number }) {
+function FamilyInfoBox({ family, mode }: { family: FamilyKey; mode: "holding" | "in_event" }) {
   const [open, setOpen] = useState(false);
-  const info = family === "close_return" ? getCloseReturnInfo(nPeriods) : familyInfo[family];
+  const info = family === "close_return" ? getCloseReturnInfo(mode) : getGapFillInfo(mode);
 
   return (
     <div className="rounded-lg border border-surface-border bg-surface-overlay/50">
@@ -66,8 +73,8 @@ function FamilyInfoBox({ family, nPeriods }: { family: FamilyKey; nPeriods: numb
 
 // ── Main component ────────────────────────────────────────────────────────────
 export function ProbabilityPanel() {
-  const result   = useEventEdgeStore((s) => s.probabilisticResult);
-  const nPeriods = useEventEdgeStore((s) => s.nPeriods);
+  const result          = useEventEdgeStore((s) => s.probabilisticResult);
+  const priceActionMode = useEventEdgeStore((s) => s.priceActionMode);
   const [selected, setSelected] = useState<FamilyKey>("close_return");
 
   const family = useMemo(
@@ -115,14 +122,14 @@ export function ProbabilityPanel() {
             }`}
             onClick={() => setSelected(f)}
           >
-            {f === "close_return" ? getCloseReturnInfo(nPeriods).label : familyInfo[f].label}
+            {f === "close_return" ? getCloseReturnInfo(priceActionMode).label : getGapFillInfo(priceActionMode).label}
           </button>
         ))}
       </div>
 
       {/* Info box colapsable */}
       <div className="mb-4">
-        <FamilyInfoBox family={selected} nPeriods={nPeriods} />
+        <FamilyInfoBox family={selected} mode={priceActionMode} />
       </div>
 
       {/* Contenido */}

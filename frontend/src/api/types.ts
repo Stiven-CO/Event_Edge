@@ -79,6 +79,14 @@ export interface ConditionedSummary {
   event_day_return_mean: number | null;
   event_day_return_std: number | null;
   avg_forward_return: Record<number, { mean: number; std: number }>;
+  return_max: number | null;
+  return_min: number | null;
+  return_avg_positive: number | null;
+  return_avg_negative: number | null;
+  return_count_positive: number;
+  return_count_negative: number;
+  return_skewness: number | null;
+  return_kurtosis: number | null;
   return_samples_close: number[];
   return_samples_gap: number[];
 }
@@ -123,10 +131,10 @@ export interface ConditioningParams {
   price_vs_ema50_pct_max?: number;
   trend_directions?: TrendDirection[];
   // B — Momentum
-  return_5d_min?: number;
-  return_5d_max?: number;
-  return_20d_min?: number;
-  return_20d_max?: number;
+  return_5p_min?: number;
+  return_5p_max?: number;
+  return_20p_min?: number;
+  return_20p_max?: number;
   rsi14_min?: number;
   rsi14_max?: number;
   // C — Sobreextensión
@@ -190,6 +198,7 @@ export interface GlobalInformativeRequest {
   source?: string;
   asset_class?: string;
   ohlcv_source?: string;
+  timeframe?: string;
 }
 
 export interface ReturnHistogram {
@@ -237,6 +246,7 @@ export interface AnalysisRequest {
   source: string;
   asset_class: string;
   ohlcv_source?: string;
+  timeframe?: string;
   event_type: EventType | null;  // null → path OHLCV-all-bars
   gap_threshold_pct: number;
   include_earnings_days?: boolean | null;
@@ -284,11 +294,14 @@ export interface PriceActionRequest {
   source?: string;
   asset_class?: string;
   ohlcv_source?: string;
+  timeframe?: string;
   event_type: EventType | null;  // null → path OHLCV-all-bars
   gap_threshold_pct: number;
   include_earnings_days?: boolean | null;
   n_periods: number;
   include_bands: boolean;
+  price_action_mode?: "holding" | "in_event";
+  event_timeframe?: string;
   conditioning: ConditioningParams;
   credentials_account?: string;
 }
@@ -317,8 +330,8 @@ export interface ConditionedBar {
   price_vs_ema50_pct: number | null;
   trend_direction: string | null;
   // B - Momentum
-  return_5d: number | null;
-  return_20d: number | null;
+  return_5p: number | null;
+  return_20p: number | null;
   rsi14: number | null;
   // C - Sobreextensión
   bb_position: string | null;
@@ -345,6 +358,7 @@ export interface ConditioningCountRequest {
   source?: string;
   asset_class?: string;
   ohlcv_source?: string;
+  timeframe?: string;
   event_type?: EventType | null;
   gap_threshold_pct?: number;
   include_earnings_days?: boolean | null;

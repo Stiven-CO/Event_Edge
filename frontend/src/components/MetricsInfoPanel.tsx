@@ -103,7 +103,30 @@ export function MetricsInfoPanel() {
                   ? "n/a"
                   : `${(((summary.event_day_volume_std ?? 0) / summary.event_day_volume_mean) * 100).toFixed(1)}%`
               }
-              sub="dispersión entre eventos"
+            />
+          </div>
+
+          {/* ── Fila 3: distribución del retorno al período elegido ── */}
+          <div className="grid grid-cols-4 gap-3">
+            <StatCard
+              label="Máx / Mín retorno"
+              value={fmtPct(summary.return_max)}
+              sub={summary.return_min == null ? undefined : fmtPct(summary.return_min)}
+            />
+            <StatCard
+              label="Prom. positivos / negativos"
+              value={fmtPct(summary.return_avg_positive)}
+              sub={summary.return_avg_negative == null ? undefined : fmtPct(summary.return_avg_negative)}
+            />
+            <StatCard
+              label="N+ / N−"
+              value={String(summary.return_count_positive)}
+              sub={String(summary.return_count_negative)}
+            />
+            <StatCard
+              label="Skewness / Kurtosis"
+              value={summary.return_skewness == null ? "n/a" : summary.return_skewness.toFixed(2)}
+              sub={summary.return_kurtosis == null ? undefined : summary.return_kurtosis.toFixed(2)}
             />
           </div>
 

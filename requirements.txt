@@ -12,3 +12,4 @@ httpx>=0.27
 yfinance>=0.2.38
 lxml>=5.0
 ta>=0.10
+matplotlib>=3.8

@@ -26,6 +26,7 @@ from backend.api.schemas import (
 logger = logging.getLogger(__name__)
 
 MIN_EVENTS_PLOT = 5
+MULTI_DAY_TFS = {"1w", "1mo", "3mo", "6mo", "1y"}
 
 
 def _to_utc(v) -> pd.Timestamp:
@@ -37,12 +38,33 @@ def _to_utc(v) -> pd.Timestamp:
 # Función principal
 # ---------------------------------------------------------------------------
 
+def _get_event_window(
+    event_ts: pd.Timestamp,
+    outer_timeframe: str,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Retorna (window_start, window_end) para el período del evento según el outer TF."""
+    ts = event_ts.normalize()
+    if outer_timeframe == "1mo":
+        start = ts.replace(day=1)
+        if start.month == 12:
+            end = start.replace(year=start.year + 1, month=1)
+        else:
+            end = start.replace(month=start.month + 1)
+        return start, end
+    if outer_timeframe == "1w":
+        start = ts - pd.Timedelta(days=ts.dayofweek)  # lunes de la semana
+        return start, start + pd.Timedelta(days=7)
+    # Para 1d, 4h, 1h, 30m, etc. → ventana = solo el día del evento
+    return ts, ts + pd.Timedelta(days=1)
+
+
 def compute_price_action(
     events_df: pd.DataFrame,
     ohlcv_daily_df: pd.DataFrame,
     ohlcv_intraday_df: pd.DataFrame | None,
     n_periods: int,
     include_bands: bool = True,
+    outer_timeframe: str = "1d",
 ) -> PriceActionResult:
     """
     Construye el PriceActionResult a partir de los eventos ya condicionados.
@@ -50,13 +72,16 @@ def compute_price_action(
     Args:
         events_df:         DataFrame de eventos filtrados (columnas: date, gap_pct …).
         ohlcv_daily_df:    OHLCV diario con DatetimeIndex UTC.
-        ohlcv_intraday_df: OHLCV 30min con DatetimeIndex UTC; None si n_periods > 0.
-        n_periods:         Horizonte (0 = intraday, >0 = daily).
+        ohlcv_intraday_df: OHLCV del TF del evento con DatetimeIndex UTC; None si n_periods > 0.
+        n_periods:         Horizonte (0 = inside event, >0 = daily holding).
         include_bands:     Si False, no calcular std; devolver band_upper/lower = None.
+        outer_timeframe:   TF del análisis condicionado (ej. "1d", "1mo"). Determina la
+                           ventana de barras a extraer en modo inside event.
     """
     if n_periods == 0:
         intraday = ohlcv_intraday_df if ohlcv_intraday_df is not None else pd.DataFrame()
-        return _build_intraday(events_df, ohlcv_daily_df, intraday, include_bands)
+        return _build_intraday(events_df, ohlcv_daily_df, intraday, include_bands,
+                               outer_timeframe=outer_timeframe)
     return _build_daily(events_df, ohlcv_daily_df, n_periods, include_bands)
 
 
@@ -69,11 +94,14 @@ def _build_intraday(
     ohlcv_daily: pd.DataFrame,
     ohlcv_30min: pd.DataFrame,
     include_bands: bool,
+    outer_timeframe: str = "1d",
 ) -> PriceActionResult:
+    is_multi_day = outer_timeframe in MULTI_DAY_TFS
+
     daily_idx = ohlcv_daily.sort_index()
     daily_by_date_intraday = {ts.normalize(): ts for ts in daily_idx.index}
 
-    # Construir índice de fechas disponibles en 30min
+    # Construir índice de fechas disponibles (solo usado en modo single-day)
     if ohlcv_30min.empty:
         available_dates: set[str] = set()
     else:
@@ -91,43 +119,66 @@ def _build_intraday(
         event_ts = _to_utc(row["date"])
         event_date_str = str(event_ts.normalize().date())
 
-        # Verificar datos diarios para referencia (lookup por fecha normalizada)
-        daily_key = daily_by_date_intraday.get(event_ts.normalize())
-        if daily_key is None:
-            n_omitted += 1
-            logger.warning("[_build_intraday] Evento %s no encontrado en OHLCV diario; omitido", event_date_str)
-            continue
+        if is_multi_day:
+            # Ventana completa del período (p.ej. todo el mes para outer=1mo)
+            window_start, window_end = _get_event_window(event_ts, outer_timeframe)
+            bars = ohlcv_30min[
+                (ohlcv_30min.index >= window_start) &
+                (ohlcv_30min.index < window_end)
+            ].sort_index()
 
-        # Referencia: open diario de P0
-        ref = float(daily_idx.loc[daily_key, "open"])
-        if math.isnan(ref) or ref == 0:
-            n_omitted += 1
-            logger.warning("[_build_intraday] Evento %s tiene open diario inválido (%.4f); omitido", event_date_str, ref)
-            continue
+            if bars.empty:
+                n_omitted += 1
+                logger.warning(
+                    "[_build_intraday] Evento %s sin barras %s en ventana %s→%s; omitido",
+                    event_date_str, outer_timeframe,
+                    window_start.date(), window_end.date(),
+                )
+                continue
 
-        # Clasificar win/loss con datos diarios
-        close_p0 = float(daily_idx.loc[daily_key, "close"])
-        is_win = (close_p0 - ref) / ref > 0
+            # Ref = open del primer día del período
+            ref = float(bars["open"].iloc[0])
+            if math.isnan(ref) or ref == 0:
+                n_omitted += 1
+                continue
 
-        # Verificar disponibilidad de datos intradía
-        if event_date_str not in available_dates:
-            n_omitted += 1
-            logger.warning(
-                "[_build_intraday] Evento %s sin datos 30min en DataFrame (available_dates=%d); omitido",
-                event_date_str, len(available_dates),
-            )
-            continue
+            # Win/loss = retorno completo del período
+            close_last = float(bars["close"].iloc[-1])
+            is_win = (close_last - ref) / ref > 0
 
-        # Extraer barras del día del evento
-        bars = ohlcv_30min[
-            ohlcv_30min.index.normalize().tz_convert("UTC") == event_ts.normalize()
-        ].sort_index()
+        else:
+            # Caso original: ventana = exactamente el día del evento (30m, etc.)
+            daily_key = daily_by_date_intraday.get(event_ts.normalize())
+            if daily_key is None:
+                n_omitted += 1
+                logger.warning("[_build_intraday] Evento %s no encontrado en OHLCV diario; omitido", event_date_str)
+                continue
 
-        if bars.empty:
-            n_omitted += 1
-            continue
+            ref = float(daily_idx.loc[daily_key, "open"])
+            if math.isnan(ref) or ref == 0:
+                n_omitted += 1
+                logger.warning("[_build_intraday] Evento %s tiene open diario inválido (%.4f); omitido", event_date_str, ref)
+                continue
 
-        # Normalizar cierre de cada barra
+            close_p0 = float(daily_idx.loc[daily_key, "close"])
+            is_win = (close_p0 - ref) / ref > 0
+
+            if event_date_str not in available_dates:
+                n_omitted += 1
+                logger.warning(
+                    "[_build_intraday] Evento %s sin datos 30min en DataFrame (available_dates=%d); omitido",
+                    event_date_str, len(available_dates),
+                )
+                continue
+
+            bars = ohlcv_30min[
+                ohlcv_30min.index.normalize().tz_convert("UTC") == event_ts.normalize()
+            ].sort_index()
+
+            if bars.empty:
+                n_omitted += 1
+                continue
+
         norm = [float(c) / ref * 100.0 for c in bars["close"].tolist()]
         all_series.append(norm)
         if is_win:
@@ -136,19 +187,16 @@ def _build_intraday(
             loss_series.append(norm)
 
     logger.info(
-        "[_build_intraday] Resultado: %d eventos procesados, %d omitidos (30min vacíos)",
-        len(all_series), n_omitted,
+        "[_build_intraday] outer_tf=%s | %d eventos procesados, %d omitidos",
+        outer_timeframe, len(all_series), n_omitted,
     )
 
-    # Alinear al máximo largo; series cortas se rellenan con NaN.
-    # np.nanmean/nanstd ignoran NaN automáticamente en _aggregate_series.
     n_bars = _max_length(all_series)
     all_series  = _pad_to(all_series,  n_bars)
     win_series  = _pad_to(win_series,  n_bars)
     loss_series = _pad_to(loss_series, n_bars)
 
-    # Construir x_labels con timestamps representativos (si hay datos)
-    x_labels = _intraday_labels(ohlcv_30min, events_df, n_bars)
+    x_labels = _intraday_labels(ohlcv_30min, events_df, n_bars, outer_timeframe)
 
     return PriceActionResult(
         anchor_mode="intraday_30min",
@@ -293,12 +341,18 @@ def _intraday_labels(
     ohlcv_30min: pd.DataFrame,
     events_df: pd.DataFrame,
     n_bars: int,
+    outer_timeframe: str = "1d",
 ) -> list[str]:
     """
-    Genera etiquetas de tiempo para las barras de 30min.
-    Usa el evento con MÁS barras disponibles como referencia para garantizar
-    que el rango completo quede representado en el eje x.
+    Genera etiquetas de eje X para el plot inside event.
+    - outer_timeframe en ("1w","1mo",...): "D1", "D2", ... (días de trading del período)
+    - outer_timeframe == "1d" u otros sub-diarios: "%H:%M" (barras del día)
     """
+    # Ventanas multi-día → etiquetas de día
+    if outer_timeframe in MULTI_DAY_TFS:
+        return [f"D{i + 1}" for i in range(n_bars)]
+
+    # Ventana del día → etiquetas horarias (comportamiento original)
     if ohlcv_30min.empty or events_df.empty or n_bars == 0:
         return [str(i) for i in range(n_bars)]
 

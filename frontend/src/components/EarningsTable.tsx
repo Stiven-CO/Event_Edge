@@ -69,9 +69,9 @@ const ALL_COLUMNS: ColDef[] = [
     colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
   { key: "trend_direction",   label: "Tendencia",        cluster: "A · Tendencia", format: fmtStr },
   // ── B - Momentum
-  { key: "return_5d",         label: "Ret. 5d",          cluster: "B · Momentum",  format: (v) => fmtPctRaw(v),
+  { key: "return_5p",         label: "Ret. 5p",          cluster: "B · Momentum",  format: (v) => fmtPctRaw(v),
     colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
-  { key: "return_20d",        label: "Ret. 20d",         cluster: "B · Momentum",  format: (v) => fmtPctRaw(v),
+  { key: "return_20p",        label: "Ret. 20p",         cluster: "B · Momentum",  format: (v) => fmtPctRaw(v),
     colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
   { key: "rsi14",             label: "RSI(14)",          cluster: "B · Momentum",  format: (v) => fmtNum(v, 1) },
   // ── C - Sobreextensión
@@ -96,7 +96,7 @@ const ALL_COLUMNS: ColDef[] = [
 ];
 
 const DEFAULT_VISIBLE = new Set<string>([
-  "date", "gap_pct", "trend_direction", "rsi14", "day_of_week", "return_5d", "vol_regime",
+  "date", "gap_pct", "trend_direction", "rsi14", "day_of_week", "return_5p", "vol_regime",
 ]);
 
 // ── Conditioning summary helper ───────────────────────────────────────────────
@@ -111,10 +111,10 @@ function formatConditioningSummary(c: ConditioningParams): string | null {
     parts.push(`Precio vs EMA50: ${c.price_vs_ema50_pct_min ?? "–"} a ${c.price_vs_ema50_pct_max ?? "–"}%`);
   if (c.rsi14_min != null || c.rsi14_max != null)
     parts.push(`RSI(14): ${c.rsi14_min ?? "–"}–${c.rsi14_max ?? "–"}`);
-  if (c.return_5d_min != null || c.return_5d_max != null)
-    parts.push(`Ret.5d: ${c.return_5d_min ?? "–"} a ${c.return_5d_max ?? "–"}%`);
-  if (c.return_20d_min != null || c.return_20d_max != null)
-    parts.push(`Ret.20d: ${c.return_20d_min ?? "–"} a ${c.return_20d_max ?? "–"}%`);
+  if (c.return_5p_min != null || c.return_5p_max != null)
+    parts.push(`Ret.5p: ${c.return_5p_min ?? "–"} a ${c.return_5p_max ?? "–"}%`);
+  if (c.return_20p_min != null || c.return_20p_max != null)
+    parts.push(`Ret.20p: ${c.return_20p_min ?? "–"} a ${c.return_20p_max ?? "–"}%`);
   if (c.bb_positions?.length) parts.push(`BB pos: ${c.bb_positions.join(", ")}`);
   if (c.rsi14_zones?.length) parts.push(`RSI zona: ${c.rsi14_zones.join(", ")}`);
   if (c.vol_regimes?.length) parts.push(`Vol: ${c.vol_regimes.join(", ")}`);

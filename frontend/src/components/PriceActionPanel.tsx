@@ -61,13 +61,16 @@ function buildChartData(
 // ---------------------------------------------------------------------------
 
 export function PriceActionPanel() {
-  const result = useEventEdgeStore((s) => s.priceActionResult);
+  const result                = useEventEdgeStore((s) => s.priceActionResult);
+  const priceActionMode       = useEventEdgeStore((s) => s.priceActionMode);
+  const priceActionEventTF    = useEventEdgeStore((s) => s.priceActionEventTF);
+  const setPriceActionEventTF = useEventEdgeStore((s) => s.setPriceActionEventTF);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [showBands, setShowBands] = useState(false);
 
   if (!result) return null;
 
-  const { series_all, series_win, series_loss, x_labels, n_events_all, n_events_win, n_events_loss, n_events_omitted, warning, anchor_mode, n_periods, intraday_source_error } = result;
+  const { series_all, series_win, series_loss, x_labels, n_events_all, n_events_win, n_events_loss, n_events_omitted, warning, n_periods, intraday_source_error } = result;
 
   const seriesMap: Record<FilterKey, PriceActionSeries> = {
     all:  series_all,
@@ -124,9 +127,9 @@ export function PriceActionPanel() {
     loss: n_events_loss,
   };
 
-  const modeLabel = anchor_mode === "intraday_30min"
-    ? "Intradía 30min (P0)"
-    : `Diario P1–P${n_periods}`;
+  const modeLabel = priceActionMode === "in_event"
+    ? `Inside Event (${priceActionEventTF})`
+    : `Holding P1–P${n_periods}`;
 
   return (
     <div className="mt-4 rounded-xl border border-surface-border bg-surface-raised/60">
@@ -152,6 +155,22 @@ export function PriceActionPanel() {
 
         {/* Controles */}
         <div className="flex items-center gap-3">
+          {/* TF selector — solo en modo in_event */}
+          {priceActionMode === "in_event" && (
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="text-ink-muted">TF evento:</span>
+              <select
+                className="rounded border border-surface-border bg-surface-overlay px-2 py-0.5 text-xs text-ink-primary"
+                value={priceActionEventTF}
+                onChange={(e) => setPriceActionEventTF(e.target.value)}
+              >
+                {["30m", "1d"].map((tf) => (
+                  <option key={tf} value={tf}>{tf}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Toggle All / Win / Loss */}
           <div className="flex rounded-lg border border-surface-border overflow-hidden text-xs">
             {(["all", "win", "loss"] as FilterKey[]).map((key) => {

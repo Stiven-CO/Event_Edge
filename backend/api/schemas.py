@@ -138,10 +138,10 @@ class ConditioningParams(BaseModel):
     trend_directions: list[TrendDirection] | None = None
 
     # ── B: Momentum ───────────────────────────────────────────────────
-    return_5d_min: float | None = None             # retorno 5 sesiones antes
-    return_5d_max: float | None = None
-    return_20d_min: float | None = None            # retorno 20 sesiones antes
-    return_20d_max: float | None = None
+    return_5p_min: float | None = None             # retorno 5 barras antes
+    return_5p_max: float | None = None
+    return_20p_min: float | None = None            # retorno 20 barras antes
+    return_20p_max: float | None = None
     rsi14_min: float | None = None                 # RSI(14) en T-1
     rsi14_max: float | None = None
 
@@ -194,6 +194,7 @@ class AnalysisRequest(BaseModel):
     source: str = "yfinance"
     asset_class: str = "equity"
     ohlcv_source: str | None = None
+    timeframe: str = "1d"
     event_type: EventType | None = None  # None → path OHLCV-all-bars (sin detección de eventos)
     gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
     include_earnings_days: bool | None = None
@@ -233,6 +234,7 @@ class ConditioningCountRequest(BaseModel):
     source: str = "yfinance"
     asset_class: str = "equity"
     ohlcv_source: str | None = None
+    timeframe: str = "1d"
     event_type: EventType | None = None
     gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
     include_earnings_days: bool | None = None
@@ -277,8 +279,8 @@ class ConditionedBar(BaseModel):
     price_vs_ema50_pct: float | None = None
     trend_direction: str | None = None
     # B - Momentum
-    return_5d: float | None = None
-    return_20d: float | None = None
+    return_5p: float | None = None
+    return_20p: float | None = None
     rsi14: float | None = None
     # C - Sobreextensión
     bb_position: str | None = None
@@ -376,6 +378,7 @@ class GlobalInformativeRequest(BaseModel):
     source: str = "yfinance"
     asset_class: str = "equity"
     ohlcv_source: str | None = None
+    timeframe: str = "1d"
 
     @field_validator("symbol")
     @classmethod
@@ -524,6 +527,16 @@ class ConditionedSummary(BaseModel):
     # Forward returns condicionados
     avg_forward_return: dict[int, dict]   # {period: {mean, std}}
 
+    # Estadísticas extendidas sobre return_samples_close (forward returns al período elegido)
+    return_max: float | None
+    return_min: float | None
+    return_avg_positive: float | None
+    return_avg_negative: float | None
+    return_count_positive: int
+    return_count_negative: int
+    return_skewness: float | None
+    return_kurtosis: float | None
+
     # Muestras brutas para density plots (KDE) en frontend
     return_samples_close: list[float]
     return_samples_gap: list[float]
@@ -583,11 +596,14 @@ class PriceActionRequest(BaseModel):
     source: str = "yfinance"
     asset_class: str = "equity"
     ohlcv_source: str | None = None
+    timeframe: str = "1d"
     event_type: EventType | None = None  # None → path OHLCV-all-bars
     gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
     include_earnings_days: bool | None = None
     n_periods: int = Field(default=5, ge=0, le=60)
     include_bands: bool = True
+    price_action_mode: Literal["holding", "in_event"] = "holding"
+    event_timeframe: str = "30m"
     conditioning: ConditioningParams = Field(default_factory=ConditioningParams)
     date_range_start: datetime | None = None
     date_range_end: datetime | None = None
@@ -601,6 +617,69 @@ class PriceActionRequest(BaseModel):
                 f"symbol '{v}' inválido: debe ser entre 1 y 5 letras mayúsculas (A-Z)."
             )
         return v
+
+
+# ---------------------------------------------------------------------------
+# Persistencia — guardar Edge
+# ---------------------------------------------------------------------------
+
+class SaveEdgeRequest(BaseModel):
+    """
+    Body para POST /api/v1/analysis/save.
+
+    Superset de los campos de AnalysisRequest + PriceActionRequest: el backend
+    recalcula ambos análisis (probabilístico + price action) antes de ensamblar
+    y persistir el Edge, para que el payload guardado refleje un cómputo real.
+    """
+
+    symbol: str
+    source: str = "yfinance"
+    asset_class: str = "equity"
+    ohlcv_source: str | None = None
+    timeframe: str = "1d"
+    event_type: EventType | None = None
+    gap_threshold_pct: float = Field(default=1.0, ge=0.1, le=20.0)
+    include_earnings_days: bool | None = None
+    n_periods: int = Field(default=5, ge=0, le=60)
+    model: ModelType = ModelType.bootstrap
+    bins: list[float] = Field(default_factory=lambda: list(_DEFAULT_BINS))
+    conditioning: ConditioningParams = Field(default_factory=ConditioningParams)
+    date_range_start: datetime | None = None
+    date_range_end: datetime | None = None
+    credentials_account: str | None = None
+    include_bands: bool = True
+    price_action_mode: Literal["holding", "in_event"] = "holding"
+    event_timeframe: str = "30m"
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, v: str) -> str:
+        if not _SYMBOL_RE.match(v):
+            raise ValueError(
+                f"symbol '{v}' inválido: debe ser entre 1 y 5 letras mayúsculas (A-Z)."
+            )
+        return v
+
+    @field_validator("bins")
+    @classmethod
+    def validate_bins(cls, v: list[float]) -> list[float]:
+        if len(v) < 2:
+            raise ValueError("bins debe tener al menos 2 elementos.")
+        if any(b < -1.0 or b > 1.0 for b in v):
+            raise ValueError("Todos los valores de bins deben estar entre -1.0 y 1.0.")
+        if v != sorted(v) or len(v) != len(set(v)):
+            raise ValueError("bins debe estar ordenado estrictamente de menor a mayor.")
+        return v
+
+
+class SaveEdgeResponse(BaseModel):
+    """Respuesta para POST /api/v1/analysis/save."""
+
+    run_id: str
+    symbol: str
+    timeframe: str
+    created_at: datetime
+    plots: dict[str, str]   # nombre lógico -> ruta relativa del PNG
 
 
 # ---------------------------------------------------------------------------

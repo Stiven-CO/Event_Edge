@@ -12,11 +12,14 @@ import { usePriceAction } from "@/hooks/usePriceAction";
 import { useEventEdgeStore } from "@/store/eventEdgeStore";
 
 export function EventStudyPage() {
-  const fetchBrokerStatus   = useEventEdgeStore((s) => s.fetchBrokerStatus);
-  const probabilisticResult = useEventEdgeStore((s) => s.probabilisticResult);
-  const priceActionResult   = useEventEdgeStore((s) => s.priceActionResult);
-  const error               = useEventEdgeStore((s) => s.error);
-  const infoMessage         = useEventEdgeStore((s) => s.infoMessage);
+  const fetchBrokerStatus     = useEventEdgeStore((s) => s.fetchBrokerStatus);
+  const probabilisticResult   = useEventEdgeStore((s) => s.probabilisticResult);
+  const priceActionResult     = useEventEdgeStore((s) => s.priceActionResult);
+  const priceActionMode       = useEventEdgeStore((s) => s.priceActionMode);
+  const priceActionEventTF    = useEventEdgeStore((s) => s.priceActionEventTF);
+  const setPriceActionEventTF = useEventEdgeStore((s) => s.setPriceActionEventTF);
+  const error                 = useEventEdgeStore((s) => s.error);
+  const infoMessage           = useEventEdgeStore((s) => s.infoMessage);
   const { run: runPriceAction, isLoadingPriceAction } = usePriceAction();
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -96,14 +99,33 @@ export function EventStudyPage() {
           <MetricsInfoPanel />
 
           {probabilisticResult && (
-            <button
-              type="button"
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-surface-border bg-surface-overlay/40 py-2 text-sm text-ink-secondary transition hover:border-accent/40 hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={isLoadingPriceAction}
-              onClick={() => void runPriceAction()}
-            >
-              {isLoadingPriceAction ? "Cargando Price Action…" : "📈 Ver Price Action"}
-            </button>
+            <div className="mt-3 flex flex-col gap-2">
+              {priceActionMode === "in_event" && (
+                <div className="flex items-center gap-2 rounded-lg border border-surface-border bg-surface-overlay/20 px-3 py-2 text-xs">
+                  <span className="text-ink-muted">Timeframe del evento:</span>
+                  <select
+                    className="rounded border border-surface-border bg-surface-overlay px-2 py-0.5 text-xs text-ink-primary"
+                    value={priceActionEventTF}
+                    onChange={(e) => setPriceActionEventTF(e.target.value)}
+                  >
+                    {["30m", "1d"].map((tf) => (
+                      <option key={tf} value={tf}>{tf}</option>
+                    ))}
+                  </select>
+                  <span className="ml-auto text-[10px] text-ink-muted/60">
+                    30m · intradía del evento &nbsp;·&nbsp; 1d · sesión completa
+                  </span>
+                </div>
+              )}
+              <button
+                type="button"
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-surface-border bg-surface-overlay/40 py-2 text-sm text-ink-secondary transition hover:border-accent/40 hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={isLoadingPriceAction}
+                onClick={() => void runPriceAction()}
+              >
+                {isLoadingPriceAction ? "Cargando Price Action…" : "📈 Ver Price Action"}
+              </button>
+            </div>
           )}
 
           {priceActionResult && <PriceActionPanel />}
