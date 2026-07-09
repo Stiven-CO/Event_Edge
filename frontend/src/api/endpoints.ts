@@ -13,6 +13,8 @@ import type {
   PriceActionRequest,
   PriceActionResult,
   ProbabilisticResult,
+  SaveEdgeRequest,
+  SaveEdgeResponse,
 } from "@/api/types";
 
 export const endpoints = {
@@ -43,6 +45,11 @@ export const endpoints = {
     }),
   getConditioningCount: (body: ConditioningCountRequest) =>
     api.request<ConditioningCountResult>("/analysis/conditioning-count", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  saveEdge: (body: SaveEdgeRequest) =>
+    api.request<SaveEdgeResponse>("/analysis/save", {
       method: "POST",
       body: JSON.stringify(body),
     }),

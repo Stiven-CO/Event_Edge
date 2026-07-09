@@ -306,6 +306,39 @@ export interface PriceActionRequest {
   credentials_account?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Persistencia — guardar Edge
+// ---------------------------------------------------------------------------
+
+export interface SaveEdgeRequest {
+  symbol: string;
+  source?: string;
+  asset_class?: string;
+  ohlcv_source?: string;
+  timeframe?: string;
+  event_type: EventType | null;
+  gap_threshold_pct: number;
+  include_earnings_days?: boolean | null;
+  n_periods: number;
+  model: ModelType;
+  bins: number[];
+  conditioning: ConditioningParams;
+  date_range_start?: string;
+  date_range_end?: string;
+  credentials_account?: string;
+  include_bands?: boolean;
+  price_action_mode?: "holding" | "in_event";
+  event_timeframe?: string;
+}
+
+export interface SaveEdgeResponse {
+  run_id: string;
+  symbol: string;
+  timeframe: string;
+  created_at: string;
+  plots: Record<string, string>;
+}
+
 export interface ConditionedBar {
   // Identidad
   date: string;

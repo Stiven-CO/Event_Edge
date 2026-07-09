@@ -12,6 +12,7 @@ import type {
   ModelType,
   PriceActionResult,
   ProbabilisticResult,
+  SaveEdgeRequest,
 } from "@/api/types";
 
 // ---------------------------------------------------------------------------
@@ -92,6 +93,8 @@ interface EventEdgeState {
   isLoadingBrokerStatus: boolean;
   isLoadingPriceAction: boolean;
   isLoadingConditioningCount: boolean;
+  isSavingEdge: boolean;
+  lastSavedRunId: string | null;
   error: string | null;
   infoMessage: string | null;
   // ── Setters ───────────────────────────────────────────────────────────────
@@ -123,6 +126,7 @@ interface EventEdgeState {
   fetchConditionedAnalysis: () => Promise<void>;
   fetchPriceAction: () => Promise<void>;
   fetchConditioningCount: () => Promise<void>;
+  saveEdge: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +176,8 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   isLoadingBrokerStatus: false,
   isLoadingPriceAction: false,
   isLoadingConditioningCount: false,
+  isSavingEdge: false,
+  lastSavedRunId: null,
   error: null,
   infoMessage: null,
 
@@ -373,6 +379,47 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
       set({
         isLoadingPriceAction: false,
         error: error instanceof Error ? error.message : "No se pudo cargar Price Action",
+      });
+    }
+  },
+
+  saveEdge: async () => {
+    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, model, nPeriods, priceActionMode,
+             priceActionEventTF, gapThreshold, includeEarningsDays, bins, conditioning, dateStart, dateEnd,
+             assetClass, timeframe } = get();
+    set({ isSavingEdge: true, error: null, infoMessage: null });
+    const resolvedEventType = typeData === "fundamental" ? eventType : null;
+    try {
+      const body: SaveEdgeRequest = {
+        symbol,
+        source,
+        asset_class: assetClass,
+        timeframe,
+        ...(typeData === "fundamental" ? { ohlcv_source: ohlcvSource } : {}),
+        event_type: resolvedEventType,
+        model,
+        n_periods: priceActionMode === "holding" ? nPeriods : 0,
+        bins,
+        gap_threshold_pct: gapThreshold,
+        include_earnings_days: resolvedEventType === "gap" ? includeEarningsDays : null,
+        conditioning: _normalizeConditioning(conditioning),
+        include_bands: true,
+        price_action_mode: priceActionMode,
+        event_timeframe: priceActionEventTF,
+        ...(dateStart ? { date_range_start: dateStart } : {}),
+        ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
+        ...((source === "mt5" || ohlcvSource === "mt5") ? { credentials_account: mt5Account } : {}),
+      };
+      const result = await endpoints.saveEdge(body);
+      set({
+        isSavingEdge: false,
+        lastSavedRunId: result.run_id,
+        infoMessage: `Análisis guardado · ${result.symbol}/${result.timeframe} · run_id: ${result.run_id}`,
+      });
+    } catch (error) {
+      set({
+        isSavingEdge: false,
+        error: error instanceof Error ? error.message : "No se pudo guardar el análisis",
       });
     }
   },

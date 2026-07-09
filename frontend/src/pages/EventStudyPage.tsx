@@ -18,6 +18,8 @@ export function EventStudyPage() {
   const priceActionMode       = useEventEdgeStore((s) => s.priceActionMode);
   const priceActionEventTF    = useEventEdgeStore((s) => s.priceActionEventTF);
   const setPriceActionEventTF = useEventEdgeStore((s) => s.setPriceActionEventTF);
+  const saveEdge               = useEventEdgeStore((s) => s.saveEdge);
+  const isSavingEdge           = useEventEdgeStore((s) => s.isSavingEdge);
   const error                 = useEventEdgeStore((s) => s.error);
   const infoMessage           = useEventEdgeStore((s) => s.infoMessage);
   const { run: runPriceAction, isLoadingPriceAction } = usePriceAction();
@@ -124,6 +126,14 @@ export function EventStudyPage() {
                 onClick={() => void runPriceAction()}
               >
                 {isLoadingPriceAction ? "Cargando Price Action…" : "📈 Ver Price Action"}
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-surface-border bg-surface-overlay/40 py-2 text-sm text-ink-secondary transition hover:border-accent/40 hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={isSavingEdge}
+                onClick={() => void saveEdge()}
+              >
+                {isSavingEdge ? "Guardando…" : "💾 Guardar análisis"}
               </button>
             </div>
           )}
