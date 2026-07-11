@@ -7,13 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.api.routers.analysis import get_mdh_client, probabilistic_analysis
-from backend.api.routers.price_action import price_action_analysis
-from backend.api.schemas import (
-    AnalysisRequest,
-    PriceActionRequest,
-    SaveEdgeRequest,
-    SaveEdgeResponse,
-)
+from backend.api.schemas import AnalysisRequest, SaveEdgeRequest, SaveEdgeResponse
 from backend.config import Settings, get_settings
 from backend.core.edge import EdgeEnvelope, FilesystemEdgeStore, assemble_edge_payload
 from backend.data import MdhClient
@@ -27,12 +21,12 @@ router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
     "/save",
     response_model=SaveEdgeResponse,
     status_code=201,
-    summary="Guardar análisis (objeto Edge + plots)",
+    summary="Guardar análisis (objeto Edge)",
     description=(
-        "Recalcula el análisis probabilístico y de price action para los parámetros "
-        "dados, ensambla el objeto Edge (con las métricas del Análisis Condicionado "
-        "y los plots asociados) y lo persiste en el filesystem bajo "
-        "data/{symbol}/{timeframe}/{run_id}/."
+        "Recalcula el análisis probabilístico para los parámetros dados, ensambla "
+        "el objeto Edge (ConditionedSummary + métricas de riesgo derivadas + "
+        "escenario-bins) y lo persiste en el filesystem bajo "
+        "data/{symbol}/{timeframe}/{run_id}/ como edge.json + return_samples.parquet."
     ),
 )
 async def save_edge(
@@ -58,43 +52,20 @@ async def save_edge(
             date_range_end=req.date_range_end,
             credentials_account=req.credentials_account,
         )
-        price_action_req = PriceActionRequest(
-            symbol=req.symbol,
-            source=req.source,
-            asset_class=req.asset_class,
-            ohlcv_source=req.ohlcv_source,
-            timeframe=req.timeframe,
-            event_type=req.event_type,
-            gap_threshold_pct=req.gap_threshold_pct,
-            include_earnings_days=req.include_earnings_days,
-            n_periods=req.n_periods,
-            include_bands=req.include_bands,
-            price_action_mode=req.price_action_mode,
-            event_timeframe=req.event_timeframe,
-            conditioning=req.conditioning,
-            date_range_start=req.date_range_start,
-            date_range_end=req.date_range_end,
-            credentials_account=req.credentials_account,
-        )
 
         probabilistic_result = await probabilistic_analysis(
             analysis_req, settings=settings, mdh_client=mdh_client
         )
-        price_action_result = await price_action_analysis(
-            price_action_req, settings=settings, mdh_client=mdh_client
-        )
 
-        edge_payload, plots = assemble_edge_payload(
+        edge_payload, return_samples_close = assemble_edge_payload(
             symbol=req.symbol,
             timeframe=req.timeframe,
             n_periods=req.n_periods,
             probabilistic_result=probabilistic_result,
-            price_action_result=price_action_result,
         )
 
         run_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc)
-        plot_rel_paths = {name: f"{name}.png" for name in plots}
 
         envelope = EdgeEnvelope(
             run_id=run_id,
@@ -102,7 +73,6 @@ async def save_edge(
             timeframe=req.timeframe,
             created_at=created_at,
             conditioning_params=req.conditioning.model_dump(),
-            plots=plot_rel_paths,
             edge=edge_payload,
         )
 
@@ -112,7 +82,7 @@ async def save_edge(
             symbol=req.symbol,
             timeframe=req.timeframe,
             edge_payload=envelope.model_dump(mode="json"),
-            plots=plots,
+            return_samples_close=return_samples_close,
         )
 
         return SaveEdgeResponse(
@@ -120,7 +90,7 @@ async def save_edge(
             symbol=req.symbol,
             timeframe=req.timeframe,
             created_at=created_at,
-            plots=plot_rel_paths,
+            return_samples_file=envelope.return_samples_file,
         )
     except HTTPException:
         raise

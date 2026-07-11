@@ -1,23 +1,22 @@
 """
-Ensambla el payload del objeto Edge y sus plots PNG a partir de los
-resultados en memoria de un análisis (ProbabilisticResult + PriceActionResult).
+Ensambla el payload del objeto Edge a partir de los resultados en memoria de
+un análisis (ProbabilisticResult).
 
 Contenido estadístico definido en el plan ("Contenido estadístico del Edge
 para Risk Engine"): el ConditionedSummary completo, 3 métricas derivadas de
 uso interno para Risk Engine (win_rate, payoff_ratio, expectancy), n_periods,
 y las families (escenario-bins) de close_return/gap_fill. El resto de la
 forma final del objeto Edge queda abierto para fase posterior.
+
+`return_samples_close` se excluye del JSON y se devuelve por separado — se
+persiste en un archivo Parquet aparte (backend/core/edge/store.py) por ser
+mucho más económico que embeberlo como array de floats en el JSON.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from backend.api.schemas import ConditionedSummary, PriceActionResult, ProbabilisticResult
-from backend.core.edge.plotting import (
-    render_close_return_plot,
-    render_gap_fill_plot,
-    render_price_action_plot,
-)
+from backend.api.schemas import ConditionedSummary, ProbabilisticResult
 
 
 def _derive_risk_metrics(summary: ConditionedSummary) -> dict[str, float | None]:
@@ -53,35 +52,25 @@ def assemble_edge_payload(
     timeframe: str,
     n_periods: int,
     probabilistic_result: ProbabilisticResult,
-    price_action_result: PriceActionResult,
-) -> tuple[dict[str, Any], dict[str, bytes]]:
+) -> tuple[dict[str, Any], list[float]]:
     """
-    Devuelve (edge_payload, plots) donde:
-      - edge_payload es el dict JSON-serializable a persistir en `edge.json` (campo `edge` del EdgeEnvelope).
-      - plots es {nombre_logico: bytes_png} para close_return, gap_fill, price_action.
+    Devuelve (edge_payload, return_samples_close) donde:
+      - edge_payload es el dict JSON-serializable a persistir en `edge.json`
+        (campo `edge` del EdgeEnvelope), sin `return_samples_close`.
+      - return_samples_close son las muestras crudas de retorno al período
+        analizado, a persistir aparte en `return_samples.parquet`.
     """
     summary = probabilistic_result.conditioned_summary
     if summary is None:
         raise ValueError("probabilistic_result.conditioned_summary es requerido para ensamblar el Edge")
 
-    families_by_name = {f.family: f for f in probabilistic_result.families}
-    close_return_family = families_by_name.get("close_return")
-    gap_fill_family = families_by_name.get("gap_fill")
-
     edge_payload: dict[str, Any] = {
         "symbol": symbol,
         "timeframe": timeframe,
         "n_periods": n_periods,
-        "conditioned_summary": summary.model_dump(),
+        "conditioned_summary": summary.model_dump(exclude={"return_samples_close"}),
         "risk_metrics": _derive_risk_metrics(summary),
         "families": [f.model_dump() for f in probabilistic_result.families],
     }
 
-    plots: dict[str, bytes] = {}
-    if close_return_family is not None:
-        plots["close_return"] = render_close_return_plot(close_return_family)
-    if gap_fill_family is not None:
-        plots["gap_fill"] = render_gap_fill_plot(gap_fill_family)
-    plots["price_action"] = render_price_action_plot(price_action_result)
-
-    return edge_payload, plots
+    return edge_payload, summary.return_samples_close

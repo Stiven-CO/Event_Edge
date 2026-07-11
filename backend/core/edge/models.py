@@ -22,7 +22,7 @@ class EdgeEnvelope(BaseModel):
     created_at: datetime
     conditioning_params: dict[str, Any]
     schema_version: int = 1
-    plots: dict[str, str]         # nombre lógico -> ruta relativa del PNG
+    return_samples_file: str = "return_samples.parquet"   # ruta relativa del Parquet con las muestras crudas
     edge: dict[str, Any]          # payload estadístico (ver assembler.assemble_edge_payload)
 
 

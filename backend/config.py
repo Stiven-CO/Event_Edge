@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     debug: bool = False
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
-    # Persistencia de análisis (objeto Edge + plots)
+    # Persistencia de análisis (objeto Edge: edge.json + return_samples.parquet)
     storage_root: str = "./data"
 
     model_config = SettingsConfigDict(

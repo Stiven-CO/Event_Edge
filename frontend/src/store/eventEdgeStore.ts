@@ -385,7 +385,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
 
   saveEdge: async () => {
     const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, model, nPeriods, priceActionMode,
-             priceActionEventTF, gapThreshold, includeEarningsDays, bins, conditioning, dateStart, dateEnd,
+             gapThreshold, includeEarningsDays, bins, conditioning, dateStart, dateEnd,
              assetClass, timeframe } = get();
     set({ isSavingEdge: true, error: null, infoMessage: null });
     const resolvedEventType = typeData === "fundamental" ? eventType : null;
@@ -403,9 +403,6 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
         gap_threshold_pct: gapThreshold,
         include_earnings_days: resolvedEventType === "gap" ? includeEarningsDays : null,
         conditioning: _normalizeConditioning(conditioning),
-        include_bands: true,
-        price_action_mode: priceActionMode,
-        event_timeframe: priceActionEventTF,
         ...(dateStart ? { date_range_start: dateStart } : {}),
         ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
         ...((source === "mt5" || ohlcvSource === "mt5") ? { credentials_account: mt5Account } : {}),

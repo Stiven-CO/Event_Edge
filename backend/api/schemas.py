@@ -627,9 +627,10 @@ class SaveEdgeRequest(BaseModel):
     """
     Body para POST /api/v1/analysis/save.
 
-    Superset de los campos de AnalysisRequest + PriceActionRequest: el backend
-    recalcula ambos análisis (probabilístico + price action) antes de ensamblar
-    y persistir el Edge, para que el payload guardado refleje un cómputo real.
+    Superset de los campos de AnalysisRequest: el backend recalcula el análisis
+    probabilístico antes de ensamblar y persistir el Edge, para que el payload
+    guardado refleje un cómputo real y no una copia potencialmente desactualizada
+    del cliente. No se calcula ni persiste el plot de Price Action.
     """
 
     symbol: str
@@ -647,9 +648,6 @@ class SaveEdgeRequest(BaseModel):
     date_range_start: datetime | None = None
     date_range_end: datetime | None = None
     credentials_account: str | None = None
-    include_bands: bool = True
-    price_action_mode: Literal["holding", "in_event"] = "holding"
-    event_timeframe: str = "30m"
 
     @field_validator("symbol")
     @classmethod
@@ -679,7 +677,7 @@ class SaveEdgeResponse(BaseModel):
     symbol: str
     timeframe: str
     created_at: datetime
-    plots: dict[str, str]   # nombre lógico -> ruta relativa del PNG
+    return_samples_file: str   # ruta relativa del Parquet con las muestras crudas de retorno
 
 
 # ---------------------------------------------------------------------------

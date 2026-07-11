@@ -326,9 +326,6 @@ export interface SaveEdgeRequest {
   date_range_start?: string;
   date_range_end?: string;
   credentials_account?: string;
-  include_bands?: boolean;
-  price_action_mode?: "holding" | "in_event";
-  event_timeframe?: string;
 }
 
 export interface SaveEdgeResponse {
@@ -336,7 +333,7 @@ export interface SaveEdgeResponse {
   symbol: string;
   timeframe: string;
   created_at: string;
-  plots: Record<string, string>;
+  return_samples_file: string;
 }
 
 export interface ConditionedBar {

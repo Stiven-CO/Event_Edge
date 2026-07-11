@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
@@ -8,9 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+import pandas as pd
+
 from backend.core.edge.models import RunMeta
 
 _EDGE_FILENAME = "edge.json"
+_RETURN_SAMPLES_FILENAME = "return_samples.parquet"
 
 
 @dataclass
@@ -19,11 +23,11 @@ class EdgeSavePaths:
 
     dir: Path
     edge_json: Path
-    plots: dict[str, Path]
+    return_samples_path: Path
 
 
 class EdgeStore(Protocol):
-    """Interfaz de persistencia del objeto Edge + plots asociados."""
+    """Interfaz de persistencia del objeto Edge + muestras de retorno."""
 
     def save(
         self,
@@ -31,7 +35,7 @@ class EdgeStore(Protocol):
         symbol: str,
         timeframe: str,
         edge_payload: dict[str, Any],
-        plots: dict[str, bytes],
+        return_samples_close: list[float],
     ) -> EdgeSavePaths: ...
 
     def load(self, symbol: str, timeframe: str, run_id: str) -> dict[str, Any]: ...
@@ -55,11 +59,18 @@ def _write_atomic(path: Path, data: bytes) -> None:
         raise
 
 
+def _return_samples_to_parquet_bytes(return_samples_close: list[float]) -> bytes:
+    df = pd.DataFrame({"return_close": return_samples_close})
+    buf = io.BytesIO()
+    df.to_parquet(buf, engine="pyarrow", index=False)
+    return buf.getvalue()
+
+
 class FilesystemEdgeStore:
     """
     Implementación de EdgeStore sobre el sistema de archivos local.
 
-    Estructura: {root}/{symbol}/{timeframe}/{run_id}/edge.json + {plot}.png
+    Estructura: {root}/{symbol}/{timeframe}/{run_id}/edge.json + return_samples.parquet
     """
 
     def __init__(self, root: str | Path):
@@ -74,7 +85,7 @@ class FilesystemEdgeStore:
         symbol: str,
         timeframe: str,
         edge_payload: dict[str, Any],
-        plots: dict[str, bytes],
+        return_samples_close: list[float],
     ) -> EdgeSavePaths:
         run_dir = self._run_dir(symbol, timeframe, run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -82,13 +93,10 @@ class FilesystemEdgeStore:
         edge_json_path = run_dir / _EDGE_FILENAME
         _write_atomic(edge_json_path, json.dumps(edge_payload, indent=2, default=str).encode("utf-8"))
 
-        plot_paths: dict[str, Path] = {}
-        for name, png_bytes in plots.items():
-            plot_path = run_dir / f"{name}.png"
-            _write_atomic(plot_path, png_bytes)
-            plot_paths[name] = plot_path
+        return_samples_path = run_dir / _RETURN_SAMPLES_FILENAME
+        _write_atomic(return_samples_path, _return_samples_to_parquet_bytes(return_samples_close))
 
-        return EdgeSavePaths(dir=run_dir, edge_json=edge_json_path, plots=plot_paths)
+        return EdgeSavePaths(dir=run_dir, edge_json=edge_json_path, return_samples_path=return_samples_path)
 
     def load(self, symbol: str, timeframe: str, run_id: str) -> dict[str, Any]:
         edge_json_path = self._run_dir(symbol, timeframe, run_id) / _EDGE_FILENAME
