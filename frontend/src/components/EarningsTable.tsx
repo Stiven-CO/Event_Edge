@@ -87,7 +87,6 @@ const ALL_COLUMNS: ColDef[] = [
   { key: "take_earnings",     label: "Día Earnings",     cluster: "E · Fundamental", format: fmtBool },
   { key: "eps_surprise_pct",  label: "EPS Sorpresa%",    cluster: "E · Fundamental", format: (v) => fmtPct(v),
     colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
-  { key: "guidance",          label: "Guidance",         cluster: "E · Fundamental", format: fmtStr },
   // ── G - Estacionalidad
   { key: "day_of_week",       label: "Día semana",       cluster: "G · Estacionalidad", format: fmtStr },
   { key: "month",             label: "Mes",              cluster: "G · Estacionalidad", format: fmtStr },
@@ -120,7 +119,6 @@ function formatConditioningSummary(c: ConditioningParams): string | null {
   if (c.vol_regimes?.length) parts.push(`Vol: ${c.vol_regimes.join(", ")}`);
   if (c.atr_pct_min != null || c.atr_pct_max != null)
     parts.push(`ATR%: ${c.atr_pct_min ?? "–"}–${c.atr_pct_max ?? "–"}`);
-  if (c.guidance_directions?.length) parts.push(`Guidance: ${c.guidance_directions.join(", ")}`);
   if (c.eps_surprise_pct_min != null || c.eps_surprise_pct_max != null)
     parts.push(`EPS sorpresa: ${c.eps_surprise_pct_min ?? "–"} a ${c.eps_surprise_pct_max ?? "–"}%`);
   if (c.gap_direction && c.gap_direction !== "any") parts.push(`Gap: ${c.gap_direction}`);

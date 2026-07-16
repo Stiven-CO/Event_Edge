@@ -1,6 +1,5 @@
 export type EventType = "earnings" | "gap";
 export type ModelType = "frequentist" | "bootstrap" | "kde" | "bayesian";
-export type GuidanceDirection = "raised" | "maintained" | "lowered" | "not_available";
 export type BBPosition = "below_lower" | "in_lower" | "middle" | "in_upper" | "above_upper";
 export type TrendDirection = "bullish" | "sideways" | "bearish";
 export type RSIZone = "oversold" | "neutral" | "overbought";
@@ -42,7 +41,6 @@ export interface EventRecord {
   eps_surprise_pct: number | null;
   revenue_actual: number | null;
   revenue_estimate: number | null;
-  guidance: GuidanceDirection;
 }
 
 export interface ScenarioBin {
@@ -64,6 +62,8 @@ export interface ProbabilisticFamily {
   scenarios: ScenarioBin[];
 }
 
+// Estadísticas del EVENTO condicionado (día P0): frecuencia, gap, día del evento.
+// No incluye retorno posterior — ver FutureReturnMetrics.
 export interface ConditionedSummary {
   n_conditioned_events: number;
   n_total_events: number;
@@ -78,6 +78,12 @@ export interface ConditionedSummary {
   event_day_volume_std: number | null;
   event_day_return_mean: number | null;
   event_day_return_std: number | null;
+  return_samples_gap: number[];
+}
+
+// Métricas del RETORNO POSTERIOR al evento (P1 → Pn), al período elegido por el usuario.
+export interface FutureReturnMetrics {
+  n_periods: number;
   avg_forward_return: Record<number, { mean: number; std: number }>;
   return_max: number | null;
   return_min: number | null;
@@ -88,7 +94,6 @@ export interface ConditionedSummary {
   return_skewness: number | null;
   return_kurtosis: number | null;
   return_samples_close: number[];
-  return_samples_gap: number[];
 }
 
 export interface ProbabilisticResult {
@@ -98,6 +103,7 @@ export interface ProbabilisticResult {
   data_source_detail?: string | null;
   families: ProbabilisticFamily[];
   conditioned_summary?: ConditionedSummary | null;
+  future_return_metrics?: FutureReturnMetrics | null;
 }
 
 export interface InformativeMetrics {
@@ -154,7 +160,11 @@ export interface ConditioningParams {
   take_earnings?: boolean;
   eps_surprise_pct_min?: number;
   eps_surprise_pct_max?: number;
-  guidance_directions?: GuidanceDirection[];
+  // Tendencia EPS (-1/0/1 vs. trimestre anterior), disponible en toda barra
+  reported_eps_trend_min?: number;
+  reported_eps_trend_max?: number;
+  eps_estimate_trend_min?: number;
+  eps_estimate_trend_max?: number;
   // F — Posicionamiento
   gap_pct_min?: number;
   gap_pct_max?: number;
@@ -257,6 +267,9 @@ export interface AnalysisRequest {
   date_range_start?: string;
   date_range_end?: string;
   credentials_account?: string;
+  // Determina qué representa future_return_metrics: "holding" → retorno
+  // posterior al evento (P1→Pn); "in_event" → retorno del propio día del evento.
+  price_action_mode?: "holding" | "in_event";
 }
 
 // ---------------------------------------------------------------------------
@@ -326,6 +339,7 @@ export interface SaveEdgeRequest {
   date_range_start?: string;
   date_range_end?: string;
   credentials_account?: string;
+  price_action_mode?: "holding" | "in_event";
 }
 
 export interface SaveEdgeResponse {
@@ -375,7 +389,6 @@ export interface ConditionedBar {
   // E - Fundamental
   take_earnings: boolean | null;
   eps_surprise_pct: number | null;
-  guidance: string | null;
   // G - Estacionalidad
   day_of_week: string | null;
   month: string | null;

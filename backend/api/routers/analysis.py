@@ -18,6 +18,7 @@ from backend.api.schemas import (
     ConditioningCountResult,
     ConditioningParams,
     EventType,
+    FutureReturnMetrics,
     GlobalInformativeMetrics,
     GlobalInformativeRequest,
     ModelType,
@@ -75,6 +76,7 @@ async def informative_analysis(
         return compute_global_metrics(
             ohlcv_df=ohlcv_df,
             symbol=req.symbol,
+            timeframe=req.timeframe,
             data_source=source_used,
         )
     except HTTPException:
@@ -156,6 +158,13 @@ async def probabilistic_analysis(
             ohlcv_df=ohlcv_df,
             n_total_events=n_total,
             n_periods=req.n_periods,
+        )
+        result.future_return_metrics = _build_future_return_metrics(
+            conditioned_df=conditioned_df,
+            ohlcv_df=ohlcv_df,
+            n_total_events=n_total,
+            n_periods=req.n_periods,
+            price_action_mode=req.price_action_mode,
         )
         return result
     except HTTPException:
@@ -250,6 +259,15 @@ def _enum_val(v) -> str | None:
     return getattr(v, "value", str(v)) if v is not None else None
 
 
+def _safe_int(v) -> int | None:
+    try:
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return None
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _row_to_bar(row) -> ConditionedBar:
     te = row.get("take_earnings")
     return ConditionedBar(
@@ -291,13 +309,48 @@ def _row_to_bar(row) -> ConditionedBar:
         # E - Fundamental
         take_earnings=bool(te) if te is not None else None,
         eps_surprise_pct=_safe_float(row.get("eps_surprise_pct")),
-        guidance=_enum_val(row.get("guidance")),
+        # E - Fundamental expandido (backward/forward-fill)
+        eps_actual_ffill=_safe_float(row.get("eps_actual_ffill")),
+        reported_eps_trend=_safe_int(row.get("reported_eps_trend")),
+        eps_estimate_ffill=_safe_float(row.get("eps_estimate_ffill")),
+        eps_estimate_trend=_safe_int(row.get("eps_estimate_trend")),
         # G - Estacionalidad
         day_of_week=_enum_val(row.get("day_of_week")),
         month=_enum_val(row.get("month")),
         quarter=_enum_val(row.get("quarter")),
         earnings_season=_enum_val(row.get("earnings_season")),
     )
+
+
+def _s(arr: list[float]) -> tuple[float | None, float | None]:
+    """Media y desvío estándar (ddof=1) de una lista de floats; (None, None) si vacía."""
+    if not arr:
+        return None, None
+    a = np.array(arr, dtype=float)
+    return float(np.mean(a)), float(np.std(a, ddof=1)) if len(a) > 1 else 0.0
+
+
+def _extended_stats(arr: list[float]) -> dict:
+    if not arr:
+        return {
+            "max": None, "min": None,
+            "avg_positive": None, "avg_negative": None,
+            "count_positive": 0, "count_negative": 0,
+            "skewness": None, "kurtosis": None,
+        }
+    a = np.array(arr, dtype=float)
+    pos = a[a > 0]
+    neg = a[a < 0]
+    return {
+        "max": float(np.max(a)),
+        "min": float(np.min(a)),
+        "avg_positive": float(np.mean(pos)) if pos.size > 0 else None,
+        "avg_negative": float(np.mean(neg)) if neg.size > 0 else None,
+        "count_positive": int(pos.size),
+        "count_negative": int(neg.size),
+        "skewness": float(scipy_stats.skew(a)) if a.size >= 3 else None,
+        "kurtosis": float(scipy_stats.kurtosis(a)) if a.size >= 4 else None,
+    }
 
 
 def _build_conditioned_summary(
@@ -307,8 +360,10 @@ def _build_conditioned_summary(
     n_periods: int,
 ) -> ConditionedSummary:
     """
-    Construye ConditionedSummary a partir del DataFrame de features condicionados.
+    Construye ConditionedSummary — estadísticas del EVENTO condicionado (día P0):
+    frecuencia, gap, comportamiento del propio día del evento.
 
+    No incluye métricas de retorno posterior (P1→Pn) — ver _build_future_return_metrics.
     No accede a fuentes externas. Deriva todo de conditioned_df + ohlcv_df.
     """
     n_cond = len(conditioned_df)
@@ -324,12 +379,6 @@ def _build_conditioned_summary(
             event_day_range_mean=None, event_day_range_std=None,
             event_day_volume_mean=None, event_day_volume_std=None,
             event_day_return_mean=None, event_day_return_std=None,
-            avg_forward_return={},
-            return_max=None, return_min=None,
-            return_avg_positive=None, return_avg_negative=None,
-            return_count_positive=0, return_count_negative=0,
-            return_skewness=None, return_kurtosis=None,
-            return_samples_close=[],
             return_samples_gap=[],
         )
 
@@ -376,39 +425,73 @@ def _build_conditioned_summary(
             if not np.isnan(float(vol)):
                 volumes.append(float(vol))
 
-    def _s(arr: list[float]) -> tuple[float | None, float | None]:
-        if not arr:
-            return None, None
-        a = np.array(arr, dtype=float)
-        return float(np.mean(a)), float(np.std(a, ddof=1)) if len(a) > 1 else 0.0
-
-    def _extended_stats(arr: list[float]) -> dict:
-        if not arr:
-            return {
-                "max": None, "min": None,
-                "avg_positive": None, "avg_negative": None,
-                "count_positive": 0, "count_negative": 0,
-                "skewness": None, "kurtosis": None,
-            }
-        a = np.array(arr, dtype=float)
-        pos = a[a > 0]
-        neg = a[a < 0]
-        return {
-            "max": float(np.max(a)),
-            "min": float(np.min(a)),
-            "avg_positive": float(np.mean(pos)) if pos.size > 0 else None,
-            "avg_negative": float(np.mean(neg)) if neg.size > 0 else None,
-            "count_positive": int(pos.size),
-            "count_negative": int(neg.size),
-            "skewness": float(scipy_stats.skew(a)) if a.size >= 3 else None,
-            "kurtosis": float(scipy_stats.kurtosis(a)) if a.size >= 4 else None,
-        }
-
     range_mean, range_std   = _s(ranges)
     vol_mean, vol_std       = _s(volumes)
     ret_mean, ret_std       = _s(ev_returns)
 
-    # Forward returns condicionados — períodos fijos [1, 3, 5, 10]
+    return_samples_gap = [float(v) for v in conditioned_df["gap_pct"].dropna() if v != 0.0]
+
+    return ConditionedSummary(
+        n_conditioned_events=n_cond,
+        n_total_events=n_total_events,
+        filter_rate=filter_rate,
+        frequency_per_year=frequency_per_year,
+        frequency_per_quarter=frequency_per_quarter,
+        gap_mean=gap_mean,
+        gap_std=gap_std,
+        event_day_range_mean=range_mean,
+        event_day_range_std=range_std,
+        event_day_volume_mean=vol_mean,
+        event_day_volume_std=vol_std,
+        event_day_return_mean=ret_mean,
+        event_day_return_std=ret_std,
+        return_samples_gap=return_samples_gap,
+    )
+
+
+def _build_future_return_metrics(
+    conditioned_df: pd.DataFrame,
+    ohlcv_df: pd.DataFrame,
+    n_total_events: int,
+    n_periods: int,
+    price_action_mode: str = "holding",
+) -> FutureReturnMetrics:
+    """
+    Construye FutureReturnMetrics.
+
+    Modo `holding`: estadísticas del RETORNO POSTERIOR al evento condicionado
+    (P1-open → Pn-close, al período elegido por el usuario) — hay un "futuro"
+    real que medir.
+
+    Modo `in_event`: no existe un retorno posterior con sentido (el análisis
+    vive dentro del propio día del evento) — las estadísticas extendidas y las
+    muestras crudas se calculan sobre el retorno del propio día del evento
+    (P0 open → close), misma referencia que
+    ConditionedSummary.event_day_return_mean/std.
+
+    En ambos modos, `avg_forward_return` (tabla de períodos fijos 1/3/5/10)
+    se calcula igual — es una referencia informativa independiente del modo.
+
+    No incluye información del evento en sí (día P0) — ver _build_conditioned_summary.
+    No accede a fuentes externas. Deriva todo de conditioned_df + ohlcv_df.
+    """
+    n_cond = len(conditioned_df)
+
+    if n_total_events == 0 or n_cond == 0:
+        return FutureReturnMetrics(
+            n_periods=n_periods,
+            avg_forward_return={},
+            return_max=None, return_min=None,
+            return_avg_positive=None, return_avg_negative=None,
+            return_count_positive=0, return_count_negative=0,
+            return_skewness=None, return_kurtosis=None,
+            return_samples_close=[],
+        )
+
+    df = ohlcv_df.sort_index()
+    trading_dates = df.index
+
+    # Forward returns condicionados — períodos fijos [1, 3, 5, 10] (igual en ambos modos)
     fixed_periods = [1, 3, 5, 10]
     avg_forward_return: dict[int, dict] = {}
     for per in fixed_periods:
@@ -425,37 +508,38 @@ def _build_conditioned_summary(
         fwd_mean, fwd_std = _s(fwd)
         avg_forward_return[per] = {"mean": fwd_mean or 0.0, "std": fwd_std or 0.0}
 
-    # Return samples para KDE — forward returns al período del análisis
-    return_samples_close: list[float] = []
-    actual_period = max(1, n_periods)
-    for ts in conditioned_df["date"]:
-        ts_utc = pd.Timestamp(ts).tz_convert("UTC") if getattr(ts, "tzinfo", None) else pd.Timestamp(ts, tz="UTC")
-        loc = trading_dates.get_indexer([ts_utc], method="nearest")[0]
-        if loc < 0 or loc + actual_period >= len(df):
-            continue
-        open_p1  = float(df["open"].iloc[loc + 1])
-        close_pn = float(df["close"].iloc[loc + actual_period])
-        if open_p1 > 0 and not (np.isnan(open_p1) or np.isnan(close_pn)):
-            return_samples_close.append((close_pn - open_p1) / open_p1)
+    return_samples: list[float] = []
+    if price_action_mode == "in_event":
+        # Retorno del propio día del evento (P0 open → close) — no hay "futuro" en este modo
+        for ts in conditioned_df["date"]:
+            ts_utc = pd.Timestamp(ts).tz_convert("UTC") if getattr(ts, "tzinfo", None) else pd.Timestamp(ts, tz="UTC")
+            loc = trading_dates.get_indexer([ts_utc], method="nearest")[0]
+            if loc < 0:
+                continue
+            found = trading_dates[loc].normalize()
+            if found != ts_utc.normalize():
+                continue
+            row_open  = float(df["open"].iloc[loc])
+            row_close = float(df["close"].iloc[loc])
+            if row_open > 0 and not (np.isnan(row_open) or np.isnan(row_close)):
+                return_samples.append((row_close - row_open) / row_open)
+    else:
+        # holding: retorno posterior P1-open → Pn-close, al período elegido
+        actual_period = max(1, n_periods)
+        for ts in conditioned_df["date"]:
+            ts_utc = pd.Timestamp(ts).tz_convert("UTC") if getattr(ts, "tzinfo", None) else pd.Timestamp(ts, tz="UTC")
+            loc = trading_dates.get_indexer([ts_utc], method="nearest")[0]
+            if loc < 0 or loc + actual_period >= len(df):
+                continue
+            open_p1  = float(df["open"].iloc[loc + 1])
+            close_pn = float(df["close"].iloc[loc + actual_period])
+            if open_p1 > 0 and not (np.isnan(open_p1) or np.isnan(close_pn)):
+                return_samples.append((close_pn - open_p1) / open_p1)
 
-    return_samples_gap = [float(v) for v in conditioned_df["gap_pct"].dropna() if v != 0.0]
+    ext = _extended_stats(return_samples)
 
-    ext = _extended_stats(return_samples_close)
-
-    return ConditionedSummary(
-        n_conditioned_events=n_cond,
-        n_total_events=n_total_events,
-        filter_rate=filter_rate,
-        frequency_per_year=frequency_per_year,
-        frequency_per_quarter=frequency_per_quarter,
-        gap_mean=gap_mean,
-        gap_std=gap_std,
-        event_day_range_mean=range_mean,
-        event_day_range_std=range_std,
-        event_day_volume_mean=vol_mean,
-        event_day_volume_std=vol_std,
-        event_day_return_mean=ret_mean,
-        event_day_return_std=ret_std,
+    return FutureReturnMetrics(
+        n_periods=n_periods,
         avg_forward_return=avg_forward_return,
         return_max=ext["max"],
         return_min=ext["min"],
@@ -465,8 +549,7 @@ def _build_conditioned_summary(
         return_count_negative=ext["count_negative"],
         return_skewness=ext["skewness"],
         return_kurtosis=ext["kurtosis"],
-        return_samples_close=return_samples_close,
-        return_samples_gap=return_samples_gap,
+        return_samples_close=return_samples,
     )
 
 
@@ -537,9 +620,14 @@ def apply_conditioning(df: pd.DataFrame, cond: ConditioningParams) -> pd.DataFra
         f = f[f["eps_surprise_pct"] >= cond.eps_surprise_pct_min]
     if cond.eps_surprise_pct_max is not None:
         f = f[f["eps_surprise_pct"] <= cond.eps_surprise_pct_max]
-    if cond.guidance_directions:
-        allowed = {g.value for g in cond.guidance_directions}
-        f = f[f["guidance"].map(lambda x: getattr(x, "value", x)).isin(allowed)]
+    if cond.reported_eps_trend_min is not None:
+        f = f[f["reported_eps_trend"].notna() & (f["reported_eps_trend"] >= cond.reported_eps_trend_min)]
+    if cond.reported_eps_trend_max is not None:
+        f = f[f["reported_eps_trend"].notna() & (f["reported_eps_trend"] <= cond.reported_eps_trend_max)]
+    if cond.eps_estimate_trend_min is not None:
+        f = f[f["eps_estimate_trend"].notna() & (f["eps_estimate_trend"] >= cond.eps_estimate_trend_min)]
+    if cond.eps_estimate_trend_max is not None:
+        f = f[f["eps_estimate_trend"].notna() & (f["eps_estimate_trend"] <= cond.eps_estimate_trend_max)]
 
     # ── F: Posicionamiento ────────────────────────────────────────────────────
     if cond.gap_pct_min is not None:

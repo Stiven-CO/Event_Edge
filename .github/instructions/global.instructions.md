@@ -53,7 +53,7 @@ data/ → core/ → api/
 
 ## Contratos de datos
 
-- `EventRecord`: unidad mínima de evento con campos `date`, `event_type`, `gap_pct`, `eps_surprise_pct`, `eps_actual`, `eps_estimate`, `revenue_surprise_pct`, `guidance`
+- `EventRecord`: unidad mínima de evento con campos `date`, `event_type`, `gap_pct`, `eps_surprise_pct`, `eps_actual`, `eps_estimate`, `revenue_surprise_pct`
 - `ConditioningParams`: filtros opcionales; `None` = sin condicionamiento
 - `ScenarioBins`: lista de floats configurada por el usuario (ej. `[-0.05, -0.01, 0.01, 0.05]`), nunca hardcodeada en el backend
 - `ProbabilisticResult`: siempre incluye `n_samples_used` y `n_total_events`

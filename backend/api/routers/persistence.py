@@ -51,6 +51,7 @@ async def save_edge(
             date_range_start=req.date_range_start,
             date_range_end=req.date_range_end,
             credentials_account=req.credentials_account,
+            price_action_mode=req.price_action_mode,
         )
 
         probabilistic_result = await probabilistic_analysis(

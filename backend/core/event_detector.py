@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from backend.api.schemas import EventRecord, EventType, GuidanceDirection
+from backend.api.schemas import EventRecord, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,6 @@ class EventDetector:
                     eps_actual=eps_actual,
                     eps_estimate=eps_estimate,
                     eps_surprise_pct=eps_surprise_pct,
-                    guidance=GuidanceDirection.not_available,
                 )
             )
 
@@ -206,7 +205,6 @@ class EventDetector:
                     event_type=EventType.gap,
                     symbol="",  # se rellena en capa superior
                     gap_pct=float(gap_val),
-                    guidance=GuidanceDirection.not_available,
                 )
             )
 

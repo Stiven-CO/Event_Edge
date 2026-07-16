@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 
 import type {
   BBPosition, ConditioningParams, DayOfWeek, EarningsSeason,
-  GuidanceDirection, ModelType,
+  ModelType,
   MonthOfYear, Quarter, RSIZone, TrendDirection, VolRegime,
 } from "@/api/types";
 import { useAnalysis } from "@/hooks/useAnalysis";
@@ -467,11 +467,12 @@ export function SidebarMenu() {
               <RangeRow label="EPS surprise %" min={-100} max={100}
                 value={{ min: localCond.eps_surprise_pct_min, max: localCond.eps_surprise_pct_max }}
                 onChange={(r) => setLocalCond(updateRange(localCond, "eps_surprise_pct_min", "eps_surprise_pct_max", r))} />
-              <CheckboxGroup<GuidanceDirection>
-                label="Guidance"
-                values={["raised", "maintained", "lowered", "not_available"]}
-                selected={localCond.guidance_directions ?? []}
-                onToggle={(v) => setLocalCond({ ...localCond, guidance_directions: toggleArr(localCond.guidance_directions, v) })} />
+              <RangeRow label="Tendencia EPS reportado (-1 baja / 0 igual / 1 sube)" min={-1} max={1}
+                value={{ min: localCond.reported_eps_trend_min, max: localCond.reported_eps_trend_max }}
+                onChange={(r) => setLocalCond(updateRange(localCond, "reported_eps_trend_min", "reported_eps_trend_max", r))} />
+              <RangeRow label="Tendencia EPS estimado (-1 baja / 0 igual / 1 sube)" min={-1} max={1}
+                value={{ min: localCond.eps_estimate_trend_min, max: localCond.eps_estimate_trend_max }}
+                onChange={(r) => setLocalCond(updateRange(localCond, "eps_estimate_trend_min", "eps_estimate_trend_max", r))} />
             </Accordion>
           )}
 

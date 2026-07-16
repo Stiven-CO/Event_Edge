@@ -10,7 +10,7 @@ Clusters:
     B - Momentum:       return_5p, return_20p, rsi14
     C - Sobreextensión: bb_position, bb_width_pct, rsi14_zone
     D - Volatilidad:    hist_vol_10d, vol_ratio_10_30, atr_pct, vol_regime
-    E - Fundamental:    eps_surprise_pct, guidance  (solo path earnings)
+    E - Fundamental:    eps_surprise_pct  (solo path earnings)
     F - Posicionamiento: gap_pct
     G - Estacionalidad: day_of_week, month, quarter, earnings_season
 
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
+from bisect import bisect_left, bisect_right
 
 import numpy as np
 import pandas as pd
@@ -32,7 +33,6 @@ from backend.api.schemas import (
     DayOfWeek,
     EarningsSeason,
     EventType,
-    GuidanceDirection,
     MonthOfYear,
     Quarter,
     RSIZone,
@@ -73,7 +73,11 @@ _RESULT_COLUMNS = [
     # D - Volatilidad
     "hist_vol_10d", "vol_ratio_10_30", "atr_pct", "vol_regime",
     # E - Fundamental
-    "take_earnings", "eps_surprise_pct", "guidance",
+    "take_earnings", "eps_surprise_pct",
+    # E - Fundamental expandido (backward/forward-fill, disponible en TODA barra —
+    # no solo el día del reporte; base habilitante para condicionamiento por
+    # tendencia en una iteración futura, ver docs/metrics.md)
+    "eps_actual_ffill", "reported_eps_trend", "eps_estimate_ffill", "eps_estimate_trend",
     # G - Estacionalidad
     "day_of_week", "month", "quarter", "earnings_season",
 ]
@@ -184,7 +188,10 @@ class FeatureBuilder:
                 "vol_regime":          vol_regime_series.values,
                 "take_earnings":       False,
                 "eps_surprise_pct":    None,
-                "guidance":            GuidanceDirection.not_available,
+                "eps_actual_ffill":    None,
+                "reported_eps_trend":  None,
+                "eps_estimate_ffill":  None,
+                "eps_estimate_trend":  None,
                 "day_of_week":         day_of_week_series.values,
                 "month":               month_series.values,
                 "quarter":             quarter_series.values,
@@ -206,7 +213,7 @@ class FeatureBuilder:
         Pipeline fundamental: OHLCV + earnings → dataset completo con máscara de earning day.
 
         Construye features técnicas sobre el historial OHLCV completo y añade
-        datos fundamentales (eps_surprise_pct, guidance) para los días de earning.
+        datos fundamentales (eps_surprise_pct) para los días de earning.
         La columna `take_earnings` identifica qué barras son días de reporte.
 
         Retorna una fila por barra OHLCV (no pre-filtra). El condicionamiento
@@ -279,13 +286,37 @@ class FeatureBuilder:
             for ts, data in earning_map.items()
         }
 
+        # ── Fundamental expandido: backward/forward-fill + tendencia multi-trimestre ──
+        # Aditivo — no reemplaza take_earnings/eps_surprise_pct (puntuales, solo en el
+        # día del reporte). Aquí se expande el dato a TODA barra: el histórico
+        # (eps_actual) se arrastra hacia adelante (backward-fill, "lo último ya
+        # sabido"); el estimado (eps_estimate) se arrastra hacia atrás
+        # (forward-fill, "lo próximo esperado") — mismo patrón que
+        # pd.merge_asof(direction='backward'/'forward') usado como referencia.
+        sorted_report_dates = sorted(earning_map.keys())
+        reported_eps_by_date = {d: earning_map[d].get("eps_actual") for d in sorted_report_dates}
+        eps_estimate_by_date = {d: earning_map[d].get("eps_estimate") for d in sorted_report_dates}
+
+        # Tendencia (1/-1/0 vs. reporte anterior) sobre la SECUENCIA de reportes
+        # (no sobre el índice diario) — replica Tendencia_Reported_EPS/
+        # Tendencia_EPS_Estimate del notebook de referencia.
+        eps_actual_seq   = pd.Series([reported_eps_by_date[d] for d in sorted_report_dates], dtype=float)
+        eps_estimate_seq = pd.Series([eps_estimate_by_date[d] for d in sorted_report_dates], dtype=float)
+        reported_eps_trend_seq = np.where(
+            eps_actual_seq > eps_actual_seq.shift(1), 1,
+            np.where(eps_actual_seq < eps_actual_seq.shift(1), -1, 0),
+        )
+        eps_estimate_trend_seq = np.where(
+            eps_estimate_seq > eps_estimate_seq.shift(1), 1,
+            np.where(eps_estimate_seq < eps_estimate_seq.shift(1), -1, 0),
+        )
+        reported_eps_trend_by_date = dict(zip(sorted_report_dates, reported_eps_trend_seq))
+        eps_estimate_trend_by_date = dict(zip(sorted_report_dates, eps_estimate_trend_seq))
+
         # ── Construir filas (una por barra OHLCV) ───────────────────────────
         # Normalizar a midnight para garantizar match con earning_day_set
         take_earnings_arr = np.array([ts.normalize() in earning_day_set for ts in df.index])
         eps_surprise_arr  = np.array([eps_map.get(ts.normalize()) for ts in df.index], dtype=object)
-        guidance_arr      = np.array([
-            GuidanceDirection.not_available for _ in df.index
-        ], dtype=object)
 
         # Base cruda de earnings (sin transformar), por fecha de trading mapeada
         eps_actual_arr = np.array(
@@ -302,6 +333,24 @@ class FeatureBuilder:
         )
         revenue_estimate_arr = np.array(
             [earning_map.get(ts.normalize(), {}).get("revenue_estimate") for ts in df.index], dtype=object
+        )
+
+        # Fundamental expandido: disponible en TODA barra, no solo el día del reporte
+        eps_actual_ffill_arr = np.array(
+            [_asof_backward(sorted_report_dates, reported_eps_by_date, ts.normalize()) for ts in df.index],
+            dtype=object,
+        )
+        reported_eps_trend_arr = np.array(
+            [_asof_backward(sorted_report_dates, reported_eps_trend_by_date, ts.normalize()) for ts in df.index],
+            dtype=object,
+        )
+        eps_estimate_ffill_arr = np.array(
+            [_asof_forward(sorted_report_dates, eps_estimate_by_date, ts.normalize()) for ts in df.index],
+            dtype=object,
+        )
+        eps_estimate_trend_arr = np.array(
+            [_asof_forward(sorted_report_dates, eps_estimate_trend_by_date, ts.normalize()) for ts in df.index],
+            dtype=object,
         )
 
         result = pd.DataFrame(
@@ -335,7 +384,10 @@ class FeatureBuilder:
                 "vol_regime":          vol_regime_series.values,
                 "take_earnings":       take_earnings_arr,
                 "eps_surprise_pct":    eps_surprise_arr,
-                "guidance":            guidance_arr,
+                "eps_actual_ffill":    eps_actual_ffill_arr,
+                "reported_eps_trend":  reported_eps_trend_arr,
+                "eps_estimate_ffill":  eps_estimate_ffill_arr,
+                "eps_estimate_trend":  eps_estimate_trend_arr,
                 "day_of_week":         day_of_week_series.values,
                 "month":               month_series.values,
                 "quarter":             quarter_series.values,
@@ -508,6 +560,26 @@ def _ts_to_quarter(ts: pd.Timestamp) -> Quarter | None:
 
 def _ts_to_earnings_season(ts: pd.Timestamp) -> EarningsSeason:
     return EarningsSeason.peak if ts.month in _PEAK_MONTHS else EarningsSeason.off_season
+
+
+# ---------------------------------------------------------------------------
+# Helpers de backward/forward-fill de datos fundamentales sobre fechas ordenadas
+# ---------------------------------------------------------------------------
+
+def _asof_backward(sorted_dates: list[pd.Timestamp], values_by_date: dict, query_date: pd.Timestamp) -> object:
+    """Último valor conocido en sorted_dates <= query_date (equivalente a merge_asof direction='backward')."""
+    idx = bisect_right(sorted_dates, query_date) - 1
+    if idx < 0:
+        return None
+    return values_by_date.get(sorted_dates[idx])
+
+
+def _asof_forward(sorted_dates: list[pd.Timestamp], values_by_date: dict, query_date: pd.Timestamp) -> object:
+    """Próximo valor conocido en sorted_dates >= query_date (equivalente a merge_asof direction='forward')."""
+    idx = bisect_left(sorted_dates, query_date)
+    if idx >= len(sorted_dates):
+        return None
+    return values_by_date.get(sorted_dates[idx])
 
 
 # ---------------------------------------------------------------------------

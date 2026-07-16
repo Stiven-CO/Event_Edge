@@ -17,7 +17,6 @@ def test_build_returns_correct_columns(built_features_df: pd.DataFrame):
         "bb_position",
         "eps_surprise_pct",
         "revenue_surprise_pct",
-        "guidance",
     }
     assert expected.issubset(set(built_features_df.columns))
 

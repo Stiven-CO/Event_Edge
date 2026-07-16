@@ -24,13 +24,6 @@ class ModelType(str, Enum):
     bayesian = "bayesian"
 
 
-class GuidanceDirection(str, Enum):
-    raised = "raised"
-    maintained = "maintained"
-    lowered = "lowered"
-    not_available = "not_available"
-
-
 class BBPosition(str, Enum):
     below_lower = "below_lower"
     in_lower = "in_lower"
@@ -103,7 +96,6 @@ class EventRecord(BaseModel):
     Unidad mínima de un evento detectado (earnings o gap).
 
     date debe ser timezone-aware (UTC). Nunca naive.
-    guidance = GuidanceDirection.not_available cuando la info no está disponible.
     """
 
     date: datetime
@@ -115,7 +107,6 @@ class EventRecord(BaseModel):
     eps_surprise_pct: float | None = None
     revenue_actual: float | None = None
     revenue_estimate: float | None = None
-    guidance: GuidanceDirection = GuidanceDirection.not_available
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +155,12 @@ class ConditioningParams(BaseModel):
     take_earnings: bool | None = None               # True → filtrar solo días de earning
     eps_surprise_pct_min: float | None = None
     eps_surprise_pct_max: float | None = None
-    guidance_directions: list[GuidanceDirection] | None = None
+    # Tendencia EPS (-1 baja / 0 igual / 1 sube vs. trimestre anterior), disponible
+    # en TODA barra (backward/forward-fill) — no requiere take_earnings=True.
+    reported_eps_trend_min: int | None = None       # tendencia del último EPS reportado
+    reported_eps_trend_max: int | None = None
+    eps_estimate_trend_min: int | None = None       # tendencia del próximo EPS estimado
+    eps_estimate_trend_max: int | None = None
 
     # ── F: Posicionamiento pre-evento ─────────────────────────────────
     gap_pct_min: float | None = None               # gap de apertura del evento
@@ -205,6 +201,10 @@ class AnalysisRequest(BaseModel):
     date_range_start: datetime | None = None
     date_range_end: datetime | None = None
     credentials_account: str | None = None
+    # Determina qué representa FutureReturnMetrics: "holding" → retorno posterior
+    # al evento (P1-open→Pn-close); "in_event" → retorno del propio día del
+    # evento (P0 open→close), ya que no existe un "retorno futuro" en ese modo.
+    price_action_mode: Literal["holding", "in_event"] = "holding"
 
     @field_validator("symbol")
     @classmethod
@@ -294,7 +294,11 @@ class ConditionedBar(BaseModel):
     # E - Fundamental
     take_earnings: bool | None = None
     eps_surprise_pct: float | None = None
-    guidance: str | None = None
+    # E - Fundamental expandido (backward/forward-fill, disponible en toda barra)
+    eps_actual_ffill: float | None = None
+    reported_eps_trend: int | None = None
+    eps_estimate_ffill: float | None = None
+    eps_estimate_trend: int | None = None
     # G - Estacionalidad
     day_of_week: str | None = None
     month: str | None = None
@@ -502,8 +506,11 @@ class ProbabilisticFamily(BaseModel):
 
 class ConditionedSummary(BaseModel):
     """
-    Estadísticas de eventos condicionados embebidas en ProbabilisticResult.
+    Estadísticas del EVENTO condicionado (día P0) embebidas en ProbabilisticResult.
     Reemplaza las métricas informativas que antes venían del endpoint /informative.
+
+    Describe el evento en sí (frecuencia, gap, comportamiento del día P0) — no
+    qué pasa DESPUÉS del evento; eso vive en FutureReturnMetrics (P1→Pn).
     """
 
     n_conditioned_events: int
@@ -524,7 +531,21 @@ class ConditionedSummary(BaseModel):
     event_day_return_mean: float | None
     event_day_return_std: float | None
 
-    # Forward returns condicionados
+    # Muestras brutas de gap para density plots (KDE) en frontend
+    return_samples_gap: list[float]
+
+
+class FutureReturnMetrics(BaseModel):
+    """
+    Métricas del RETORNO POSTERIOR al evento condicionado (P1 → Pn).
+
+    Separado de ConditionedSummary porque describe qué pasa DESPUÉS del
+    evento, no el evento en sí — dos familias de información distintas.
+    """
+
+    n_periods: int   # período elegido (Pn) al que corresponden las métricas de esta instancia
+
+    # Forward returns condicionados — tabla de períodos fijos
     avg_forward_return: dict[int, dict]   # {period: {mean, std}}
 
     # Estadísticas extendidas sobre return_samples_close (forward returns al período elegido)
@@ -539,7 +560,6 @@ class ConditionedSummary(BaseModel):
 
     # Muestras brutas para density plots (KDE) en frontend
     return_samples_close: list[float]
-    return_samples_gap: list[float]
 
 
 class ProbabilisticResult(BaseModel):
@@ -551,6 +571,7 @@ class ProbabilisticResult(BaseModel):
     data_source_detail: str | None = None
     families: list[ProbabilisticFamily]
     conditioned_summary: ConditionedSummary | None = None
+    future_return_metrics: FutureReturnMetrics | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +669,10 @@ class SaveEdgeRequest(BaseModel):
     date_range_start: datetime | None = None
     date_range_end: datetime | None = None
     credentials_account: str | None = None
+    # Determina qué representa future_return_metrics en el Edge persistido:
+    # "holding" → retorno posterior al evento (P1→Pn); "in_event" → retorno
+    # del propio día del evento (P0 open→close).
+    price_action_mode: Literal["holding", "in_event"] = "holding"
 
     @field_validator("symbol")
     @classmethod

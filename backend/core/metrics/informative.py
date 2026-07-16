@@ -14,10 +14,33 @@ from backend.api.schemas import (
     RollingVolPoint,
 )
 
+def _mul_volatility_to_annual(timeframe: str) -> float:
+    """Factor de multiplicación para anualizar la volatilidad según el timeframe."""
+    if timeframe == "1m":
+        return np.sqrt(60 * 24 * 365)  # 525600
+    elif timeframe == "5m":
+        return np.sqrt(12 * 24 * 365)  # 105120
+    elif timeframe == "15m":
+        return np.sqrt(4 * 24 * 365)   # 35040
+    elif timeframe == "30m":
+        return np.sqrt(2 * 24 * 365)   # 17520
+    elif timeframe == "1h":
+        return np.sqrt(24 * 365)       # 8760
+    elif timeframe == "4h":
+        return np.sqrt(6 * 365)        # 2190
+    elif timeframe == "1d":
+        return np.sqrt(252)            # días hábiles por año
+    elif timeframe == "1w":
+        return np.sqrt(52)             # semanas por año
+    elif timeframe == "1mo":
+        return np.sqrt(12)             # meses por año
+    else:
+        raise ValueError(f"Timeframe desconocido: {timeframe}")
 
 def compute_global_metrics(
     ohlcv_df: pd.DataFrame,
     symbol: str,
+    timeframe: str,
     data_source: str,
     data_source_detail: str | None = None,
 ) -> GlobalInformativeMetrics:
@@ -64,7 +87,8 @@ def compute_global_metrics(
     return_max    = float(np.max(ret_arr)) if n > 0 else 0.0
 
     # ── C: Volatilidad anualizada ─────────────────────────────────────────────
-    annualized_vol = return_std * np.sqrt(252)
+    # ajustada segun tiframe (252 sesiones por año para daily, 12 para monthly, etc.)
+    annualized_vol = return_std * _mul_volatility_to_annual(timeframe)
 
     # ── C: ATR(14) ────────────────────────────────────────────────────────────
     atr_series = _compute_atr(df, period=14)
@@ -72,7 +96,7 @@ def compute_global_metrics(
 
     # ── C: Rolling vol 30 días (ventana de 30 sesiones, anualizada) ───────────
     rolling_std = returns.rolling(30).std().dropna()
-    rolling_vol_ann = rolling_std * np.sqrt(252)
+    rolling_vol_ann = rolling_std * _mul_volatility_to_annual(timeframe)
     # Limitar a 500 puntos más recientes para mantener payload razonable
     rolling_tail = rolling_vol_ann.tail(500)
     rolling_vol_30d = [
@@ -99,6 +123,7 @@ def compute_global_metrics(
 
     return GlobalInformativeMetrics(
         symbol=symbol,
+        timeframe=timeframe,
         data_source=data_source,
         data_source_detail=data_source_detail,
         n_observations=n,
