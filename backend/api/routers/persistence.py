@@ -6,11 +6,10 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.api.routers.analysis import get_mdh_client, probabilistic_analysis
 from backend.api.schemas import AnalysisRequest, SaveEdgeRequest, SaveEdgeResponse
 from backend.config import Settings, get_settings
 from backend.core.edge import EdgeEnvelope, FilesystemEdgeStore, assemble_edge_payload
-from backend.data import MdhClient
+from backend.core.probabilistic_pipeline import run_probabilistic_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +31,6 @@ router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
 async def save_edge(
     req: SaveEdgeRequest,
     settings: Settings = Depends(get_settings),
-    mdh_client: MdhClient = Depends(get_mdh_client),
 ) -> SaveEdgeResponse:
     try:
         analysis_req = AnalysisRequest(
@@ -54,9 +52,7 @@ async def save_edge(
             price_action_mode=req.price_action_mode,
         )
 
-        probabilistic_result = await probabilistic_analysis(
-            analysis_req, settings=settings, mdh_client=mdh_client
-        )
+        probabilistic_result = run_probabilistic_analysis(analysis_req, settings)
 
         edge_payload, return_samples_close = assemble_edge_payload(
             symbol=req.symbol,

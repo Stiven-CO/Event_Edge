@@ -389,6 +389,10 @@ export interface ConditionedBar {
   // E - Fundamental
   take_earnings: boolean | null;
   eps_surprise_pct: number | null;
+  eps_actual_ffill: number | null;
+  reported_eps_trend: number | null;
+  eps_estimate_ffill: number | null;
+  eps_estimate_trend: number | null;
   // G - Estacionalidad
   day_of_week: string | null;
   month: string | null;

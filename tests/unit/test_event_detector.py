@@ -3,17 +3,19 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from backend.core.event_detector import EventDetector
+from backend.api.schemas import EventType
+from backend.core.conditioning_pipeline import select_raw_events
 
 
 @pytest.mark.unit
-def test_detect_earnings_alignment(
+def test_select_raw_events_earnings_alignment(
     synthetic_ohlcv_df: pd.DataFrame,
     synthetic_earnings: pd.DataFrame,
 ):
     """Todas las fechas retornadas deben estar en el index de ohlcv_df."""
-    detector = EventDetector()
-    events = detector.detect_earnings(synthetic_ohlcv_df, synthetic_earnings)
+    events = select_raw_events(
+        synthetic_ohlcv_df, synthetic_earnings, event_type=EventType.earnings, symbol="AAPL",
+    )
 
     ohlcv_days = {ts.date() for ts in synthetic_ohlcv_df.index.normalize()}
     for ev in events:
@@ -21,8 +23,8 @@ def test_detect_earnings_alignment(
 
 
 @pytest.mark.unit
-def test_detect_earnings_weekend_mapping(synthetic_ohlcv_df: pd.DataFrame):
-    """Earnings en fin de semana -> mapea al lunes siguiente."""
+def test_select_raw_events_earnings_weekend_mapping(synthetic_ohlcv_df: pd.DataFrame):
+    """Earnings en fin de semana -> mapea al siguiente día hábil."""
     saturday = pd.Timestamp("2022-01-08", tz="UTC")
     monday = pd.Timestamp("2022-01-10", tz="UTC")
 
@@ -36,15 +38,16 @@ def test_detect_earnings_weekend_mapping(synthetic_ohlcv_df: pd.DataFrame):
         index=[saturday],
     )
 
-    detector = EventDetector()
-    events = detector.detect_earnings(synthetic_ohlcv_df, earnings)
+    events = select_raw_events(
+        synthetic_ohlcv_df, earnings, event_type=EventType.earnings, symbol="AAPL",
+    )
 
     if events:
         assert events[0].date.date() == monday.date()
 
 
 @pytest.mark.unit
-def test_detect_earnings_out_of_range(synthetic_ohlcv_df: pd.DataFrame):
+def test_select_raw_events_earnings_out_of_range(synthetic_ohlcv_df: pd.DataFrame):
     """Earnings fuera del rango OHLCV -> lista vacía sin error."""
     future = pd.Timestamp("2099-01-01", tz="UTC")
     earnings = pd.DataFrame(
@@ -57,8 +60,9 @@ def test_detect_earnings_out_of_range(synthetic_ohlcv_df: pd.DataFrame):
         index=[future],
     )
 
-    detector = EventDetector()
-    events = detector.detect_earnings(synthetic_ohlcv_df, earnings)
+    events = select_raw_events(
+        synthetic_ohlcv_df, earnings, event_type=EventType.earnings, symbol="AAPL",
+    )
     assert events == []
 
 
@@ -94,37 +98,47 @@ def test_fetch_earnings_dates_maps_reported_eps_to_eps_actual(monkeypatch):
 
 
 @pytest.mark.unit
-def test_detect_gaps_positive(synthetic_ohlcv_df: pd.DataFrame):
+def test_select_raw_events_gap_positive(synthetic_ohlcv_df: pd.DataFrame):
     """Gap positivo > threshold se detecta."""
-    detector = EventDetector()
-    events = detector.detect_gaps(synthetic_ohlcv_df, threshold_pct=0.5)
+    events = select_raw_events(
+        synthetic_ohlcv_df,
+        pd.DataFrame(),
+        event_type=EventType.gap,
+        symbol="AAPL",
+        gap_threshold_pct=0.5,
+    )
     positive_gaps = [e for e in events if e.gap_pct is not None and e.gap_pct > 0]
     assert len(positive_gaps) > 0
 
 
 @pytest.mark.unit
-def test_detect_gaps_excludes_earnings(
+def test_select_raw_events_gap_excludes_earnings(
     synthetic_ohlcv_df: pd.DataFrame,
-    sample_events,
+    synthetic_earnings: pd.DataFrame,
 ):
-    """Fechas de earnings NO aparecen en el resultado de detect_gaps."""
-    earnings_dates = [e.date for e in sample_events]
-
-    detector = EventDetector()
-    gap_events = detector.detect_gaps(
+    """Fechas de earnings NO aparecen en el resultado de detección de gaps por defecto."""
+    gap_events = select_raw_events(
         synthetic_ohlcv_df,
-        threshold_pct=0.0,
-        earnings_dates=earnings_dates,
+        synthetic_earnings,
+        event_type=EventType.gap,
+        symbol="AAPL",
+        gap_threshold_pct=0.0,
     )
-    gap_dates = {e.date for e in gap_events}
+    earnings_events = select_raw_events(
+        synthetic_ohlcv_df,
+        synthetic_earnings,
+        event_type=EventType.earnings,
+        symbol="AAPL",
+    )
 
-    for ed in earnings_dates:
-        assert ed not in gap_dates
+    earnings_dates = {e.date.date() for e in earnings_events}
+    gap_dates = {e.date.date() for e in gap_events}
+    assert not (earnings_dates & gap_dates)
 
 
 @pytest.mark.unit
-def test_detect_gaps_empty_ohlcv():
+def test_select_raw_events_empty_ohlcv():
     """ohlcv_df vacío -> lista vacía."""
     empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-    detector = EventDetector()
-    assert detector.detect_gaps(empty) == []
+    events = select_raw_events(empty, pd.DataFrame(), event_type=EventType.gap, symbol="AAPL")
+    assert events == []

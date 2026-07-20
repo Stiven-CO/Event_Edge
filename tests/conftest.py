@@ -87,13 +87,14 @@ def sample_events(
 ) -> list[EventRecord]:
     """
     list[EventRecord] construida sobre los datos sintéticos.
-    Usa EventDetector para garantizar coherencia con OHLCV.
+    Usa select_raw_events (Pipeline 2) para garantizar coherencia con OHLCV.
     """
-    from backend.core.event_detector import EventDetector
+    from backend.api.schemas import EventType
+    from backend.core.conditioning_pipeline import select_raw_events
 
-    detector = EventDetector()
-    events = detector.detect_earnings(synthetic_ohlcv_df, synthetic_earnings)
-    return [e.model_copy(update={"symbol": "AAPL"}) for e in events]
+    return select_raw_events(
+        synthetic_ohlcv_df, synthetic_earnings, event_type=EventType.earnings, symbol="AAPL",
+    )
 
 
 @pytest.fixture

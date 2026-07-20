@@ -44,6 +44,14 @@ function fmtBool(v: unknown): string {
   return v ? "Sí" : "No";
 }
 
+function fmtTrend(v: unknown): string {
+  if (v == null) return "–";
+  const n = v as number;
+  if (n > 0) return "↑ Sube";
+  if (n < 0) return "↓ Baja";
+  return "= Igual";
+}
+
 const ALL_COLUMNS: ColDef[] = [
   // ── Identidad
   { key: "date",              label: "Fecha",            cluster: "Identidad",     format: (v) => v ? new Date(v as string).toLocaleDateString(undefined, { timeZone: "UTC" }) : "–" },
@@ -55,11 +63,11 @@ const ALL_COLUMNS: ColDef[] = [
   { key: "low",               label: "Low",              cluster: "Base",          format: (v) => fmtNum(v, 2) },
   { key: "close",             label: "Close",            cluster: "Base",          format: (v) => fmtNum(v, 2) },
   { key: "volume",            label: "Volumen",          cluster: "Base",          format: (v) => v == null ? "–" : Number(v).toLocaleString() },
-  { key: "eps_actual",        label: "EPS Actual",       cluster: "Base",          format: (v) => fmtNum(v, 2) },
-  { key: "eps_estimate",      label: "EPS Estimado",     cluster: "Base",          format: (v) => fmtNum(v, 2) },
+  { key: "eps_estimate_ffill",   label: "EPS Estimado (ffill)",    cluster: "E · Fundamental", format: (v) => fmtNum(v, 2) },
+  { key: "eps_actual_ffill",     label: "EPS Actual (ffill)",     cluster: "E · Fundamental", format: (v) => fmtNum(v, 2) },
   { key: "surprise_pct",      label: "Sorpresa % (raw)", cluster: "Base",          format: (v) => v == null ? "–" : `${(v as number).toFixed(2)}%` },
-  { key: "revenue_actual",    label: "Revenue Actual",   cluster: "Base",          format: (v) => v == null ? "–" : Number(v).toLocaleString() },
-  { key: "revenue_estimate",  label: "Revenue Estimado", cluster: "Base",          format: (v) => v == null ? "–" : Number(v).toLocaleString() },
+  // { key: "revenue_actual",    label: "Revenue Actual",   cluster: "Base",          format: (v) => v == null ? "–" : Number(v).toLocaleString() }, # aun no esta disponible
+  // { key: "revenue_estimate",  label: "Revenue Estimado", cluster: "Base",          format: (v) => v == null ? "–" : Number(v).toLocaleString() }, # aun no esta disponible
   // ── F - Posicionamiento
   { key: "gap_pct",           label: "Gap%",             cluster: "F · Posición",  format: (v) => fmtPct(v),
     colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
@@ -87,6 +95,8 @@ const ALL_COLUMNS: ColDef[] = [
   { key: "take_earnings",     label: "Día Earnings",     cluster: "E · Fundamental", format: fmtBool },
   { key: "eps_surprise_pct",  label: "EPS Sorpresa%",    cluster: "E · Fundamental", format: (v) => fmtPct(v),
     colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
+  { key: "reported_eps_trend",   label: "Tendencia EPS Reportado", cluster: "E · Fundamental", format: fmtTrend },
+  { key: "eps_estimate_trend",   label: "Tendencia EPS Estimado",  cluster: "E · Fundamental", format: fmtTrend },
   // ── G - Estacionalidad
   { key: "day_of_week",       label: "Día semana",       cluster: "G · Estacionalidad", format: fmtStr },
   { key: "month",             label: "Mes",              cluster: "G · Estacionalidad", format: fmtStr },

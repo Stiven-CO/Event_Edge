@@ -30,7 +30,7 @@ export const ASSET_CLASS_OPTIONS: Record<TypeData, string[]> = {
 
 export const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1mo"] as const;
 
-export const SOURCE_OPTIONS = ["yfinance", "mt5", "alpha_vantage"] as const;
+export const SOURCE_OPTIONS = ["yfinance", "mt5", "alphavantage"] as const;
 export type DataSource = typeof SOURCE_OPTIONS[number];
 
 // ---------------------------------------------------------------------------

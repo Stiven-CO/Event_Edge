@@ -242,6 +242,32 @@ export function SidebarMenu() {
           </div>
 
           <div>
+            <FieldLabel>Tipo de Data</FieldLabel>
+            <select
+              className="input mt-1"
+              value={typeData}
+              onChange={(e) => setTypeData(e.target.value as TypeData)}
+            >
+              {(["ohlcv", "fundamental", "macro"] as TypeData[]).map((t) => (
+                <option key={t} value={t}>{TYPE_DATA_LABEL[t]}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <FieldLabel>Segmento Financiero</FieldLabel>
+            <select
+              className="input mt-1"
+              value={assetClass}
+              onChange={(e) => setAssetClass(e.target.value)}
+            >
+              {assetClassOptions.map((ac) => (
+                <option key={ac} value={ac}>{ac}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
             <FieldLabel>Fuente</FieldLabel>
             <select
               className="input mt-1"
@@ -282,32 +308,6 @@ export function SidebarMenu() {
               <p className="mt-1 text-xs text-ink-muted">Fuente para precios OHLCV (equity)</p>
             </div>
           )}
-
-          <div>
-            <FieldLabel>Tipo de Data</FieldLabel>
-            <select
-              className="input mt-1"
-              value={typeData}
-              onChange={(e) => setTypeData(e.target.value as TypeData)}
-            >
-              {(["ohlcv", "fundamental", "macro"] as TypeData[]).map((t) => (
-                <option key={t} value={t}>{TYPE_DATA_LABEL[t]}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <FieldLabel>Segmento Financiero</FieldLabel>
-            <select
-              className="input mt-1"
-              value={assetClass}
-              onChange={(e) => setAssetClass(e.target.value)}
-            >
-              {assetClassOptions.map((ac) => (
-                <option key={ac} value={ac}>{ac}</option>
-              ))}
-            </select>
-          </div>
 
           <div>
             <FieldLabel>Timeframe</FieldLabel>

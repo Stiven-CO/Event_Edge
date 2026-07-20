@@ -9,12 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException
 logger = logging.getLogger(__name__)
 
 from backend.api.schemas import PriceActionRequest, PriceActionResult, EventType
-from backend.api.routers.analysis import apply_conditioning
 from backend.config import Settings, get_settings
-from backend.core.feature_builder import FeatureBuilder
+from backend.core import data_pipeline
+from backend.core.conditioning_pipeline import build_conditioned_dataset
 from backend.core.price_action import compute_price_action
 from backend.core.price_action.builder import MULTI_DAY_TFS, _to_utc
-from backend.data import MdhClient, MdhUnavailableError, MdhValidationError, empty_earnings_df
+from backend.data import MdhClient, MdhUnavailableError, MdhValidationError
 
 router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
 
@@ -41,8 +41,6 @@ async def price_action_analysis(
     settings: Settings = Depends(get_settings),
     mdh_client: MdhClient = Depends(get_mdh_client),
 ) -> PriceActionResult:
-    feature_builder = FeatureBuilder()
-
     try:
         # 1. OHLCV base — vía MDH (con ingest si no existe)
         ohlcv_daily = await _load_ohlcv_daily(
@@ -62,21 +60,39 @@ async def price_action_analysis(
                 detail=f"No OHLCV data available for {req.symbol}",
             )
 
-        # 2. Bifurcación: path earnings (fundamental) vs OHLCV-all-bars
+        # 2. Fechas de evento condicionadas — vía Pipeline 1 (lake) + Pipeline 2,
+        #    la misma definición de "evento" usada por /events/detect y
+        #    /analysis/probabilistic. Solo se usan las FECHAS resultantes; el
+        #    precio que efectivamente se grafica sigue viniendo de ohlcv_daily
+        #    (MDH, con auto-ingesta) — Price Action nunca expone datos
+        #    fundamentales, solo los usa como filtro de fechas (ver builder.py,
+        #    que solo lee row["date"] de events_df).
         is_fundamental = (req.event_type == EventType.earnings)
 
+        lake_ohlcv_df, _ = data_pipeline.load_ohlcv(
+            settings=settings,
+            symbol=req.symbol,
+            source=req.source,
+            asset_class=req.asset_class,
+            date_start=req.date_range_start,
+            date_end=req.date_range_end,
+            ohlcv_source=req.ohlcv_source,
+            timeframe=req.timeframe,
+        )
+        lake_earnings_df = None
         if is_fundamental:
-            try:
-                earnings_df = await mdh_client.fetch_earnings_dates(req.symbol)
-            except MdhUnavailableError:
-                earnings_df = empty_earnings_df()
-            features_df = feature_builder.build_from_fundamental_context(
-                ohlcv_daily, earnings_df, symbol=req.symbol, timeframe=req.timeframe
-            )
-        else:
-            features_df = feature_builder.build_all_bars(ohlcv_daily, symbol=req.symbol, timeframe=req.timeframe)
+            lake_earnings_df, _ = data_pipeline.fetch_earnings_safe(settings, req.symbol, req.source)
 
-        conditioned_df = apply_conditioning(features_df, req.conditioning)
+        conditioned_df, _, _ = build_conditioned_dataset(
+            ohlcv_df=lake_ohlcv_df,
+            earnings_df=lake_earnings_df,
+            event_type=req.event_type,
+            conditioning=req.conditioning,
+            symbol=req.symbol,
+            timeframe=req.timeframe,
+            date_start=req.date_range_start,
+            date_end=req.date_range_end,
+        )
 
         # 3. Si modo "in_event", cargar barras del TF del evento para las fechas condicionadas
         use_intraday = req.price_action_mode == "in_event"

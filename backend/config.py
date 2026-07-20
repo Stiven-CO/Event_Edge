@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     mdh_base_url: str = "http://localhost:8080/api/v1"
     mdh_api_key: str = ""
     mdh_enabled: bool = True          # False → yfinance fallback
+    mdh_lake_root: str = str(Path(__file__).resolve().parents[2] / "market_data_hub" / "data" / "lake")  # lectura directa (sin HTTP) para flujos no-Price-Action
 
     # App
     debug: bool = False
