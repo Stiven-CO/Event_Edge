@@ -52,6 +52,12 @@ function fmtTrend(v: unknown): string {
   return "= Igual";
 }
 
+function fmtTrendLabel(n: number): string {
+  if (n > 0) return "Sube";
+  if (n < 0) return "Baja";
+  return "Igual";
+}
+
 const ALL_COLUMNS: ColDef[] = [
   // ── Identidad
   { key: "date",              label: "Fecha",            cluster: "Identidad",     format: (v) => v ? new Date(v as string).toLocaleDateString(undefined, { timeZone: "UTC" }) : "–" },
@@ -130,6 +136,9 @@ function formatConditioningSummary(c: ConditioningParams): string | null {
     parts.push(`ATR%: ${c.atr_pct_min ?? "–"}–${c.atr_pct_max ?? "–"}`);
   if (c.eps_surprise_pct_min != null || c.eps_surprise_pct_max != null)
     parts.push(`EPS sorpresa: ${c.eps_surprise_pct_min ?? "–"} a ${c.eps_surprise_pct_max ?? "–"}%`);
+  if (c.take_earnings === true) parts.push("Día Earnings");
+  if (c.reported_eps_trends?.length) parts.push(`Tend. EPS reportado: ${c.reported_eps_trends.map(fmtTrendLabel).join(", ")}`);
+  if (c.eps_estimate_trends?.length) parts.push(`Tend. EPS estimado: ${c.eps_estimate_trends.map(fmtTrendLabel).join(", ")}`);
   if (c.gap_direction && c.gap_direction !== "any") parts.push(`Gap: ${c.gap_direction}`);
   if (c.gap_pct_min != null || c.gap_pct_max != null)
     parts.push(`Gap%: ${c.gap_pct_min ?? "–"} a ${c.gap_pct_max ?? "–"}`);

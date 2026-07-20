@@ -84,7 +84,7 @@ export function ProbabilityPanel() {
 
   const data = useMemo(() => {
     if (!family) return [];
-    return family.scenarios.map((s, i) => {
+    const mapped = family.scenarios.map((s, i) => {
       // gap_fill tiene 2 bins (No/Sí): el backend genera "< +50%" y "> +50%"
       // porque el threshold es 0.5 sobre datos binarios 0/1 — se mapean aquí.
       let label = s.label;
@@ -97,6 +97,10 @@ export function ProbabilityPanel() {
         ci:          `${(s.ci_lower * 100).toFixed(1)}%–${(s.ci_upper * 100).toFixed(1)}%`,
       };
     });
+    // El backend ordena los bins ascendente (más negativo primero, contrato de
+    // BaseEventModel). Recharts dibuja el primer elemento del array arriba, así
+    // que para close_return se invierte para mostrar positivos arriba / negativos abajo.
+    return selected === "close_return" ? mapped.reverse() : mapped;
   }, [family, selected]);
 
   return (
