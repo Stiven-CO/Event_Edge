@@ -40,9 +40,11 @@ from backend.api.schemas import (
     VolRegime,
 )
 from backend.core.event_detector import (
+    _map_earnings_to_effective_dates,
     _map_earnings_to_trading,
     eps_surprise_pct_from_raw,
 )
+from backend.core.utc import to_utc_index
 
 _BARS_PER_YEAR: dict[str, float] = {
     "1m":  252 * 390,
@@ -78,6 +80,7 @@ _RESULT_COLUMNS = [
     # no solo el día del reporte; base habilitante para condicionamiento por
     # tendencia en una iteración futura, ver docs/metrics.md)
     "eps_actual_ffill", "reported_eps_trend", "eps_estimate_ffill", "eps_estimate_trend",
+    "eps_surprise_pct_ffill",
     # G - Estacionalidad
     "day_of_week", "month", "quarter", "earnings_season",
 ]
@@ -192,6 +195,7 @@ class FeatureBuilder:
                 "reported_eps_trend":  None,
                 "eps_estimate_ffill":  None,
                 "eps_estimate_trend":  None,
+                "eps_surprise_pct_ffill": None,
                 "day_of_week":         day_of_week_series.values,
                 "month":               month_series.values,
                 "quarter":             quarter_series.values,
@@ -223,12 +227,7 @@ class FeatureBuilder:
             return pd.DataFrame(columns=_RESULT_COLUMNS)
 
         df = ohlcv_df.sort_index()
-
-        # Estandarizar índice a UTC
-        if df.index.tz is None:
-            df.index = df.index.tz_localize("UTC")
-        else:
-            df.index = df.index.tz_convert("UTC")
+        df.index = to_utc_index(df.index)
 
         # ── Pre-calcular series técnicas sobre todo el OHLCV ────────────────
         s_ema5_vs_ema20  = self._calc_ema5_vs_ema20_ratio(df)
@@ -288,20 +287,43 @@ class FeatureBuilder:
 
         # ── Fundamental expandido: backward/forward-fill + tendencia multi-trimestre ──
         # Aditivo — no reemplaza take_earnings/eps_surprise_pct (puntuales, solo en el
-        # día del reporte). Aquí se expande el dato a TODA barra: el histórico
-        # (eps_actual) se arrastra hacia adelante (backward-fill, "lo último ya
-        # sabido"); el estimado (eps_estimate) se arrastra hacia atrás
-        # (forward-fill, "lo próximo esperado") — mismo patrón que
-        # pd.merge_asof(direction='backward'/'forward') usado como referencia.
-        sorted_report_dates = sorted(earning_map.keys())
-        reported_eps_by_date = {d: earning_map[d].get("eps_actual") for d in sorted_report_dates}
-        eps_estimate_by_date = {d: earning_map[d].get("eps_estimate") for d in sorted_report_dates}
+        # día del reporte, y solo si ese día ya tiene una barra OHLCV asociada).
+        #
+        # A diferencia de earning_map (que exige que el reporte ya tenga un día de
+        # trading disponible), aquí se usa _map_earnings_to_effective_dates —
+        # incluye TODOS los reportes de earnings_df, incluido el más próximo aún no
+        # publicado (eps_actual=NaN). Sin esto, el forward-fill de eps_estimate
+        # "pierde" el último estimado conocido en cuanto el reporte programado cae
+        # más allá del último día de OHLCV cargado — replica pd.merge_asof operando
+        # sobre el DataFrame fundamental completo, tal como en el notebook de
+        # referencia (direction='backward' para lo histórico, 'forward' para el
+        # estimado).
+        #
+        # El histórico (eps_actual, eps_surprise_pct) solo tiene sentido una vez
+        # publicado, por lo que su backward-fill usa únicamente fechas con
+        # eps_actual conocido — excluye el reporte próximo aún no publicado.
+        # El estimado (eps_estimate) sí es válido para TODOS los reportes,
+        # incluido el próximo, por lo que su forward-fill usa todas las fechas.
+        effective_map = _map_earnings_to_effective_dates(earnings_df)
+        sorted_effective_dates = sorted(effective_map.keys())
+        sorted_reported_dates = [
+            d for d in sorted_effective_dates if effective_map[d].get("eps_actual") is not None
+        ]
+
+        reported_eps_by_date = {d: effective_map[d].get("eps_actual") for d in sorted_reported_dates}
+        eps_estimate_by_date = {d: effective_map[d].get("eps_estimate") for d in sorted_effective_dates}
+        eps_surprise_by_date = {
+            d: eps_surprise_pct_from_raw(
+                effective_map[d].get("surprise_pct"), effective_map[d].get("eps_actual"), effective_map[d].get("eps_estimate")
+            )
+            for d in sorted_reported_dates
+        }
 
         # Tendencia (1/-1/0 vs. reporte anterior) sobre la SECUENCIA de reportes
         # (no sobre el índice diario) — replica Tendencia_Reported_EPS/
         # Tendencia_EPS_Estimate del notebook de referencia.
-        eps_actual_seq   = pd.Series([reported_eps_by_date[d] for d in sorted_report_dates], dtype=float)
-        eps_estimate_seq = pd.Series([eps_estimate_by_date[d] for d in sorted_report_dates], dtype=float)
+        eps_actual_seq   = pd.Series([reported_eps_by_date[d] for d in sorted_reported_dates], dtype=float)
+        eps_estimate_seq = pd.Series([eps_estimate_by_date[d] for d in sorted_effective_dates], dtype=float)
         reported_eps_trend_seq = np.where(
             eps_actual_seq > eps_actual_seq.shift(1), 1,
             np.where(eps_actual_seq < eps_actual_seq.shift(1), -1, 0),
@@ -310,8 +332,8 @@ class FeatureBuilder:
             eps_estimate_seq > eps_estimate_seq.shift(1), 1,
             np.where(eps_estimate_seq < eps_estimate_seq.shift(1), -1, 0),
         )
-        reported_eps_trend_by_date = dict(zip(sorted_report_dates, reported_eps_trend_seq))
-        eps_estimate_trend_by_date = dict(zip(sorted_report_dates, eps_estimate_trend_seq))
+        reported_eps_trend_by_date = dict(zip(sorted_reported_dates, reported_eps_trend_seq))
+        eps_estimate_trend_by_date = dict(zip(sorted_effective_dates, eps_estimate_trend_seq))
 
         # ── Construir filas (una por barra OHLCV) ───────────────────────────
         # Normalizar a midnight para garantizar match con earning_day_set
@@ -337,19 +359,23 @@ class FeatureBuilder:
 
         # Fundamental expandido: disponible en TODA barra, no solo el día del reporte
         eps_actual_ffill_arr = np.array(
-            [_asof_backward(sorted_report_dates, reported_eps_by_date, ts.normalize()) for ts in df.index],
+            [_asof_backward(sorted_reported_dates, reported_eps_by_date, ts.normalize()) for ts in df.index],
             dtype=object,
         )
         reported_eps_trend_arr = np.array(
-            [_asof_backward(sorted_report_dates, reported_eps_trend_by_date, ts.normalize()) for ts in df.index],
+            [_asof_backward(sorted_reported_dates, reported_eps_trend_by_date, ts.normalize()) for ts in df.index],
             dtype=object,
         )
         eps_estimate_ffill_arr = np.array(
-            [_asof_forward(sorted_report_dates, eps_estimate_by_date, ts.normalize()) for ts in df.index],
+            [_asof_forward(sorted_effective_dates, eps_estimate_by_date, ts.normalize()) for ts in df.index],
             dtype=object,
         )
         eps_estimate_trend_arr = np.array(
-            [_asof_forward(sorted_report_dates, eps_estimate_trend_by_date, ts.normalize()) for ts in df.index],
+            [_asof_forward(sorted_effective_dates, eps_estimate_trend_by_date, ts.normalize()) for ts in df.index],
+            dtype=object,
+        )
+        eps_surprise_pct_ffill_arr = np.array(
+            [_asof_backward(sorted_reported_dates, eps_surprise_by_date, ts.normalize()) for ts in df.index],
             dtype=object,
         )
 
@@ -388,6 +414,7 @@ class FeatureBuilder:
                 "reported_eps_trend":  reported_eps_trend_arr,
                 "eps_estimate_ffill":  eps_estimate_ffill_arr,
                 "eps_estimate_trend":  eps_estimate_trend_arr,
+                "eps_surprise_pct_ffill": eps_surprise_pct_ffill_arr,
                 "day_of_week":         day_of_week_series.values,
                 "month":               month_series.values,
                 "quarter":             quarter_series.values,

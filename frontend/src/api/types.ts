@@ -158,13 +158,14 @@ export interface ConditioningParams {
   vol_regimes?: VolRegime[];
   // E — Fundamental
   take_earnings?: boolean;
+  // Filtra sobre eps_surprise_pct_ffill (disponible en toda barra), no sobre el
+  // valor puntual del día de reporte.
   eps_surprise_pct_min?: number;
   eps_surprise_pct_max?: number;
-  // Tendencia EPS (-1/0/1 vs. trimestre anterior), disponible en toda barra
-  reported_eps_trend_min?: number;
-  reported_eps_trend_max?: number;
-  eps_estimate_trend_min?: number;
-  eps_estimate_trend_max?: number;
+  // Tendencia EPS (-1/0/1 vs. trimestre anterior) — categórico, selección múltiple.
+  // Disponible en toda barra (backward/forward-fill).
+  reported_eps_trends?: number[];
+  eps_estimate_trends?: number[];
   // F — Posicionamiento
   gap_pct_min?: number;
   gap_pct_max?: number;
@@ -393,6 +394,7 @@ export interface ConditionedBar {
   reported_eps_trend: number | null;
   eps_estimate_ffill: number | null;
   eps_estimate_trend: number | null;
+  eps_surprise_pct_ffill: number | null;
   // G - Estacionalidad
   day_of_week: string | null;
   month: string | null;

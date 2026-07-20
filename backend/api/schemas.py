@@ -153,14 +153,15 @@ class ConditioningParams(BaseModel):
 
     # ── E: Fundamental (solo earnings) ───────────────────────────────
     take_earnings: bool | None = None               # True → filtrar solo días de earning
+    # Filtra sobre eps_surprise_pct_ffill (disponible en TODA barra), no sobre el
+    # valor puntual del día de reporte — no requiere take_earnings=True.
     eps_surprise_pct_min: float | None = None
     eps_surprise_pct_max: float | None = None
-    # Tendencia EPS (-1 baja / 0 igual / 1 sube vs. trimestre anterior), disponible
-    # en TODA barra (backward/forward-fill) — no requiere take_earnings=True.
-    reported_eps_trend_min: int | None = None       # tendencia del último EPS reportado
-    reported_eps_trend_max: int | None = None
-    eps_estimate_trend_min: int | None = None       # tendencia del próximo EPS estimado
-    eps_estimate_trend_max: int | None = None
+    # Tendencia EPS (-1 baja / 0 igual / 1 sube vs. trimestre anterior) — valor
+    # categórico, no un rango continuo: selección múltiple de {-1, 0, 1}.
+    # Disponible en TODA barra (backward/forward-fill) — no requiere take_earnings=True.
+    reported_eps_trends: list[int] | None = None    # tendencia del último EPS reportado
+    eps_estimate_trends: list[int] | None = None    # tendencia del próximo EPS estimado
 
     # ── F: Posicionamiento pre-evento ─────────────────────────────────
     gap_pct_min: float | None = None               # gap de apertura del evento
@@ -299,6 +300,7 @@ class ConditionedBar(BaseModel):
     reported_eps_trend: int | None = None
     eps_estimate_ffill: float | None = None
     eps_estimate_trend: int | None = None
+    eps_surprise_pct_ffill: float | None = None
     # G - Estacionalidad
     day_of_week: str | None = None
     month: str | None = None

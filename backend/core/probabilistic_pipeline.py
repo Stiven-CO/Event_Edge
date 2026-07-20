@@ -28,6 +28,7 @@ from backend.api.schemas import (
 )
 from backend.config import Settings
 from backend.core import data_pipeline
+from backend.core.utc import to_utc_ts
 from backend.core.conditioning_pipeline import build_conditioned_dataset
 from backend.core.metrics import compute_probabilistic_metrics
 from backend.core.statistical_models import (
@@ -122,6 +123,7 @@ def row_to_bar(row) -> ConditionedBar:
         reported_eps_trend=_safe_int(row.get("reported_eps_trend")),
         eps_estimate_ffill=_safe_float(row.get("eps_estimate_ffill")),
         eps_estimate_trend=_safe_int(row.get("eps_estimate_trend")),
+        eps_surprise_pct_ffill=_safe_float(row.get("eps_surprise_pct_ffill")),
         # G - Estacionalidad
         day_of_week=_enum_val(row.get("day_of_week")),
         month=_enum_val(row.get("month")),
@@ -214,7 +216,7 @@ def build_conditioned_summary(
     ev_returns: list[float] = []
 
     for ts in conditioned_df["date"]:
-        ts_utc = pd.Timestamp(ts).tz_convert("UTC") if getattr(ts, "tzinfo", None) else pd.Timestamp(ts, tz="UTC")
+        ts_utc = to_utc_ts(ts)
         loc = trading_dates.get_indexer([ts_utc], method="nearest")[0]
         if loc < 0:
             continue
@@ -305,7 +307,7 @@ def build_future_return_metrics(
     for per in fixed_periods:
         fwd: list[float] = []
         for ts in conditioned_df["date"]:
-            ts_utc = pd.Timestamp(ts).tz_convert("UTC") if getattr(ts, "tzinfo", None) else pd.Timestamp(ts, tz="UTC")
+            ts_utc = to_utc_ts(ts)
             loc = trading_dates.get_indexer([ts_utc], method="nearest")[0]
             if loc < 0 or loc + per >= len(df):
                 continue
@@ -320,7 +322,7 @@ def build_future_return_metrics(
     if price_action_mode == "in_event":
         # Retorno del propio día del evento (P0 open → close) — no hay "futuro" en este modo
         for ts in conditioned_df["date"]:
-            ts_utc = pd.Timestamp(ts).tz_convert("UTC") if getattr(ts, "tzinfo", None) else pd.Timestamp(ts, tz="UTC")
+            ts_utc = to_utc_ts(ts)
             loc = trading_dates.get_indexer([ts_utc], method="nearest")[0]
             if loc < 0:
                 continue
@@ -335,7 +337,7 @@ def build_future_return_metrics(
         # holding: retorno posterior P1-open → Pn-close, al período elegido
         actual_period = max(1, n_periods)
         for ts in conditioned_df["date"]:
-            ts_utc = pd.Timestamp(ts).tz_convert("UTC") if getattr(ts, "tzinfo", None) else pd.Timestamp(ts, tz="UTC")
+            ts_utc = to_utc_ts(ts)
             loc = trading_dates.get_indexer([ts_utc], method="nearest")[0]
             if loc < 0 or loc + actual_period >= len(df):
                 continue

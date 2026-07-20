@@ -22,16 +22,12 @@ from backend.api.schemas import (
     PriceActionResult,
     PriceActionSeries,
 )
+from backend.core.utc import to_utc_ts
 
 logger = logging.getLogger(__name__)
 
 MIN_EVENTS_PLOT = 5
 MULTI_DAY_TFS = {"1w", "1mo", "3mo", "6mo", "1y"}
-
-
-def _to_utc(v) -> pd.Timestamp:
-    ts = pd.Timestamp(v)
-    return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +112,7 @@ def _build_intraday(
     n_omitted = 0
 
     for _, row in events_df.iterrows():
-        event_ts = _to_utc(row["date"])
+        event_ts = to_utc_ts(row["date"])
         event_date_str = str(event_ts.normalize().date())
 
         if is_multi_day:
@@ -233,7 +229,7 @@ def _build_daily(
     loss_series: list[list[float]] = []
 
     for _, row in events_df.iterrows():
-        event_ts = _to_utc(row["date"])
+        event_ts = to_utc_ts(row["date"])
         pos = daily_by_date.get(event_ts.normalize())
         if pos is None:
             continue
@@ -358,7 +354,7 @@ def _intraday_labels(
 
     best_bars: pd.DataFrame | None = None
     for _, row in events_df.iterrows():
-        event_ts = _to_utc(row["date"])
+        event_ts = to_utc_ts(row["date"])
         bars = ohlcv_30min[
             ohlcv_30min.index.normalize().tz_convert("UTC") == event_ts.normalize()
         ].sort_index()

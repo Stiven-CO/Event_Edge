@@ -17,15 +17,10 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from backend.core.utc import to_utc_index
+
 _NY_TZ = ZoneInfo("America/New_York")
 _MARKET_CLOSE = time(16, 0)  # 16:00 ET
-
-
-def _to_utc_index(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
-    """Garantiza índice UTC-aware: localiza si es naive, convierte si ya tiene tz."""
-    if index.tz is None:
-        return index.tz_localize("UTC")
-    return index.tz_convert("UTC")
 
 
 def resolve_earnings_effective_date(report_ts: pd.Timestamp) -> pd.Timestamp:
@@ -58,7 +53,7 @@ def _map_earnings_to_trading(
     if earnings_df.empty or ohlcv_df.empty:
         return {}
 
-    trading_dates = _to_utc_index(ohlcv_df.index).normalize().sort_values()
+    trading_dates = to_utc_index(ohlcv_df.index).normalize().sort_values()
     used_dates: set[pd.Timestamp] = set()
     mapping: dict[pd.Timestamp, dict] = {}
 
@@ -84,6 +79,38 @@ def _map_earnings_to_trading(
             "revenue_estimate": row.get("revenue_estimate"),
         }
 
+    return mapping
+
+
+def _map_earnings_to_effective_dates(earnings_df: pd.DataFrame) -> dict[pd.Timestamp, dict]:
+    """
+    Mapea cada fecha de earnings a su fecha efectiva (resolve_earnings_effective_date),
+    SIN requerir que exista un día de trading disponible para esa fecha en el OHLCV.
+
+    A diferencia de _map_earnings_to_trading (que descarta reportes sin sesión de
+    trading disponible aún — p.ej. el próximo reporte estimado, más reciente que el
+    último dato OHLCV cargado), esta función conserva todos los reportes. Es la base
+    para el backward/forward-fill expandido (eps_actual_ffill, eps_estimate_ffill,
+    etc.), que debe reflejar el último estimado conocido incluso cuando ese reporte
+    todavía no tiene una barra OHLCV asociada — replica pd.merge_asof operando sobre
+    el DataFrame fundamental completo, tal como en el notebook de referencia.
+
+    Retorna dict {fecha_efectiva: {eps_actual, eps_estimate, surprise_pct,
+    revenue_actual, revenue_estimate}}, ordenable por fecha.
+    """
+    if earnings_df.empty:
+        return {}
+
+    mapping: dict[pd.Timestamp, dict] = {}
+    for earnings_ts, row in earnings_df.sort_index(ascending=True).iterrows():
+        effective_date = resolve_earnings_effective_date(earnings_ts)
+        mapping[effective_date] = {
+            "eps_actual": row.get("eps_actual"),
+            "eps_estimate": row.get("eps_estimate"),
+            "surprise_pct": row.get("surprise_pct"),
+            "revenue_actual": row.get("revenue_actual"),
+            "revenue_estimate": row.get("revenue_estimate"),
+        }
     return mapping
 
 

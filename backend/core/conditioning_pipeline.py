@@ -24,12 +24,7 @@ import pandas as pd
 
 from backend.api.schemas import ConditioningParams, EventRecord, EventType
 from backend.core.feature_builder import FeatureBuilder
-
-
-def _to_utc(ts: object) -> pd.Timestamp:
-    """Convierte a Timestamp UTC tolerando tanto tz-aware como tz-naive."""
-    t = pd.Timestamp(ts)
-    return t.tz_localize("UTC") if t.tz is None else t.tz_convert("UTC")
+from backend.core.utc import to_utc_ts
 
 
 def _filter_features_by_date(
@@ -42,9 +37,9 @@ def _filter_features_by_date(
         return features_df
     f = features_df.copy()
     if date_start is not None:
-        f = f[f["date"] >= _to_utc(date_start)]
+        f = f[f["date"] >= to_utc_ts(date_start)]
     if date_end is not None:
-        f = f[f["date"] <= _to_utc(date_end)]
+        f = f[f["date"] <= to_utc_ts(date_end)]
     return f
 
 
@@ -209,18 +204,18 @@ def apply_conditioning(df: pd.DataFrame, cond: ConditioningParams) -> pd.DataFra
     # ── E: Fundamental ────────────────────────────────────────────────────────
     if cond.take_earnings is True:
         f = f[f["take_earnings"] == True]  # noqa: E712
+    # Filtra sobre eps_surprise_pct_ffill (disponible en toda barra del trimestre
+    # posterior al reporte), no sobre eps_surprise_pct (solo el día exacto de
+    # reporte) — de lo contrario el filtro se comportaría como take_earnings=True
+    # forzado, sin importar lo que el usuario haya marcado.
     if cond.eps_surprise_pct_min is not None:
-        f = f[f["eps_surprise_pct"] >= cond.eps_surprise_pct_min]
+        f = f[f["eps_surprise_pct_ffill"] >= cond.eps_surprise_pct_min]
     if cond.eps_surprise_pct_max is not None:
-        f = f[f["eps_surprise_pct"] <= cond.eps_surprise_pct_max]
-    if cond.reported_eps_trend_min is not None:
-        f = f[f["reported_eps_trend"].notna() & (f["reported_eps_trend"] >= cond.reported_eps_trend_min)]
-    if cond.reported_eps_trend_max is not None:
-        f = f[f["reported_eps_trend"].notna() & (f["reported_eps_trend"] <= cond.reported_eps_trend_max)]
-    if cond.eps_estimate_trend_min is not None:
-        f = f[f["eps_estimate_trend"].notna() & (f["eps_estimate_trend"] >= cond.eps_estimate_trend_min)]
-    if cond.eps_estimate_trend_max is not None:
-        f = f[f["eps_estimate_trend"].notna() & (f["eps_estimate_trend"] <= cond.eps_estimate_trend_max)]
+        f = f[f["eps_surprise_pct_ffill"] <= cond.eps_surprise_pct_max]
+    if cond.reported_eps_trends:
+        f = f[f["reported_eps_trend"].isin(cond.reported_eps_trends)]
+    if cond.eps_estimate_trends:
+        f = f[f["eps_estimate_trend"].isin(cond.eps_estimate_trends)]
 
     # ── F: Posicionamiento ────────────────────────────────────────────────────
     if cond.gap_pct_min is not None:

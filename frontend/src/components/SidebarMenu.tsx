@@ -33,6 +33,12 @@ const TYPE_DATA_LABEL: Record<TypeData, string> = {
   macro:       "Macro / Económico",
 };
 
+const EPS_TREND_OPTIONS: { value: number; label: string }[] = [
+  { value: -1, label: "Baja" },
+  { value: 0,  label: "Igual" },
+  { value: 1,  label: "Sube" },
+];
+
 interface RangeState { min?: number; max?: number }
 
 function updateRange(
@@ -136,6 +142,35 @@ function CheckboxGroup<T extends string>({
   );
 }
 
+// Igual que CheckboxGroup, pero para valores numéricos con etiqueta separada
+// (ej. tendencia categórica -1/0/1) — CheckboxGroup<T extends string> no aplica
+// porque el valor mostrado y el valor real difieren.
+function LabeledCheckboxGroup({
+  label, options, selected, onToggle,
+}: {
+  label: string; options: { value: number; label: string }[]; selected: number[]; onToggle: (v: number) => void;
+}) {
+  return (
+    <div>
+      <p className="label mb-1">{label}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => (
+          <button
+            key={opt.value} type="button" onClick={() => onToggle(opt.value)}
+            className={`rounded-md border px-2 py-1 text-xs transition ${
+              selected.includes(opt.value)
+                ? "border-accent bg-accent/15 text-accent"
+                : "border-surface-border text-ink-muted hover:border-accent/40 hover:text-ink-secondary"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main SidebarMenu ──────────────────────────────────────────────────────────
 export function SidebarMenu() {
   // ── Store read ───────────────────────────────────────────────────────────────
@@ -211,6 +246,12 @@ export function SidebarMenu() {
   const epsEnabled  = eventType === "earnings";
 
   function toggleArr<T extends string>(arr: T[] | undefined, v: T): T[] {
+    const s = new Set(arr ?? []);
+    s.has(v) ? s.delete(v) : s.add(v);
+    return Array.from(s);
+  }
+
+  function toggleNum(arr: number[] | undefined, v: number): number[] {
     const s = new Set(arr ?? []);
     s.has(v) ? s.delete(v) : s.add(v);
     return Array.from(s);
@@ -464,15 +505,17 @@ export function SidebarMenu() {
                   Solo días de reporte de earnings
                 </label>
               </div>
-              <RangeRow label="EPS surprise %" min={-100} max={100}
+              <RangeRow label="EPS surprise % (ffill, toda la barra post-reporte)" min={-100} max={100}
                 value={{ min: localCond.eps_surprise_pct_min, max: localCond.eps_surprise_pct_max }}
                 onChange={(r) => setLocalCond(updateRange(localCond, "eps_surprise_pct_min", "eps_surprise_pct_max", r))} />
-              <RangeRow label="Tendencia EPS reportado (-1 baja / 0 igual / 1 sube)" min={-1} max={1}
-                value={{ min: localCond.reported_eps_trend_min, max: localCond.reported_eps_trend_max }}
-                onChange={(r) => setLocalCond(updateRange(localCond, "reported_eps_trend_min", "reported_eps_trend_max", r))} />
-              <RangeRow label="Tendencia EPS estimado (-1 baja / 0 igual / 1 sube)" min={-1} max={1}
-                value={{ min: localCond.eps_estimate_trend_min, max: localCond.eps_estimate_trend_max }}
-                onChange={(r) => setLocalCond(updateRange(localCond, "eps_estimate_trend_min", "eps_estimate_trend_max", r))} />
+              <LabeledCheckboxGroup label="Tendencia EPS reportado"
+                options={EPS_TREND_OPTIONS}
+                selected={localCond.reported_eps_trends ?? []}
+                onToggle={(v) => setLocalCond({ ...localCond, reported_eps_trends: toggleNum(localCond.reported_eps_trends, v) })} />
+              <LabeledCheckboxGroup label="Tendencia EPS estimado"
+                options={EPS_TREND_OPTIONS}
+                selected={localCond.eps_estimate_trends ?? []}
+                onToggle={(v) => setLocalCond({ ...localCond, eps_estimate_trends: toggleNum(localCond.eps_estimate_trends, v) })} />
             </Accordion>
           )}
 

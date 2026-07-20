@@ -13,7 +13,8 @@ from backend.config import Settings, get_settings
 from backend.core import data_pipeline
 from backend.core.conditioning_pipeline import build_conditioned_dataset
 from backend.core.price_action import compute_price_action
-from backend.core.price_action.builder import MULTI_DAY_TFS, _to_utc
+from backend.core.price_action.builder import MULTI_DAY_TFS
+from backend.core.utc import to_utc_ts
 from backend.data import MdhClient, MdhUnavailableError, MdhValidationError
 
 router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
@@ -100,7 +101,7 @@ async def price_action_analysis(
         intraday_error: str | None = None
         if use_intraday and not conditioned_df.empty:
             event_dates = sorted(set(
-                _to_utc(row["date"]).date()
+                to_utc_ts(row["date"]).date()
                 for _, row in conditioned_df.iterrows()
             ))
             logger.info(

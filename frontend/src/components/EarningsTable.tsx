@@ -63,9 +63,10 @@ const ALL_COLUMNS: ColDef[] = [
   { key: "low",               label: "Low",              cluster: "Base",          format: (v) => fmtNum(v, 2) },
   { key: "close",             label: "Close",            cluster: "Base",          format: (v) => fmtNum(v, 2) },
   { key: "volume",            label: "Volumen",          cluster: "Base",          format: (v) => v == null ? "–" : Number(v).toLocaleString() },
-  { key: "eps_estimate_ffill",   label: "EPS Estimado (ffill)",    cluster: "E · Fundamental", format: (v) => fmtNum(v, 2) },
-  { key: "eps_actual_ffill",     label: "EPS Actual (ffill)",     cluster: "E · Fundamental", format: (v) => fmtNum(v, 2) },
-  { key: "surprise_pct",      label: "Sorpresa % (raw)", cluster: "Base",          format: (v) => v == null ? "–" : `${(v as number).toFixed(2)}%` },
+  { key: "eps_estimate_ffill",   label: "EPS Estimado (ffill)",    cluster: "Base", format: (v) => fmtNum(v, 2) },
+  { key: "eps_actual_ffill",     label: "EPS Actual (ffill)",     cluster: "Base", format: (v) => fmtNum(v, 2) },
+  { key: "eps_surprise_pct_ffill", label: "EPS Sorpresa% (ffill)", cluster: "Base", format: (v) => fmtPct(v),
+    colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
   // { key: "revenue_actual",    label: "Revenue Actual",   cluster: "Base",          format: (v) => v == null ? "–" : Number(v).toLocaleString() }, # aun no esta disponible
   // { key: "revenue_estimate",  label: "Revenue Estimado", cluster: "Base",          format: (v) => v == null ? "–" : Number(v).toLocaleString() }, # aun no esta disponible
   // ── F - Posicionamiento
@@ -93,8 +94,6 @@ const ALL_COLUMNS: ColDef[] = [
   { key: "vol_regime",        label: "Régimen Vol.",     cluster: "D · Volatilidad", format: fmtStr },
   // ── E - Fundamental
   { key: "take_earnings",     label: "Día Earnings",     cluster: "E · Fundamental", format: fmtBool },
-  { key: "eps_surprise_pct",  label: "EPS Sorpresa%",    cluster: "E · Fundamental", format: (v) => fmtPct(v),
-    colorize: (v) => v == null ? null : (v as number) >= 0 ? "positive" : "negative" },
   { key: "reported_eps_trend",   label: "Tendencia EPS Reportado", cluster: "E · Fundamental", format: fmtTrend },
   { key: "eps_estimate_trend",   label: "Tendencia EPS Estimado",  cluster: "E · Fundamental", format: fmtTrend },
   // ── G - Estacionalidad

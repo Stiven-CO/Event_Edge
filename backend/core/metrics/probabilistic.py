@@ -15,6 +15,7 @@ import pandas as pd
 
 from backend.api.schemas import ModelType, ProbabilisticFamily, ProbabilisticResult
 from backend.core.statistical_models.base import BaseEventModel
+from backend.core.utc import to_utc_index, to_utc_ts
 
 
 def compute_probabilistic_metrics(
@@ -136,11 +137,7 @@ def _build_forward_returns(
     date_to_pos = _build_date_position_map(df.index)
 
     for i, event_row in out.iterrows():
-        ts = pd.Timestamp(event_row["date"])
-        if ts.tzinfo is None:
-            ts = ts.tz_localize("UTC")
-        else:
-            ts = ts.tz_convert("UTC")
+        ts = to_utc_ts(event_row["date"])
         pos = date_to_pos.get(ts.normalize())
         if pos is None:
             continue
@@ -210,11 +207,7 @@ def _compute_gap_fill_column(
         if gap_pct is None or pd.isna(gap_pct) or float(gap_pct) == 0.0:
             continue
 
-        ts = pd.Timestamp(event_row["date"])
-        if ts.tzinfo is None:
-            ts = ts.tz_localize("UTC")
-        else:
-            ts = ts.tz_convert("UTC")
+        ts = to_utc_ts(event_row["date"])
 
         pos = date_to_pos.get(ts.normalize())
         if pos is None or pos == 0:
@@ -260,10 +253,6 @@ def _compute_gap_fill_column(
 def _build_date_position_map(index: pd.DatetimeIndex) -> dict[pd.Timestamp, int]:
     """Mapa fecha-normalizada-UTC -> posición en índice OHLCV."""
     pos_map: dict[pd.Timestamp, int] = {}
-    for i, ts in enumerate(index):
-        if ts.tzinfo is None:
-            ts = ts.tz_localize("UTC")
-        else:
-            ts = ts.tz_convert("UTC")
+    for i, ts in enumerate(to_utc_index(index)):
         pos_map[ts.normalize()] = i
     return pos_map

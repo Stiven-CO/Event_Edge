@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from backend.core.utc import to_utc_ts
+
 _OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
 _EARNINGS_COLUMNS = ["eps_actual", "eps_estimate", "surprise_pct", "revenue_actual", "revenue_estimate"]
 
@@ -103,13 +105,9 @@ def _apply_date_filter(
         return df
     out = df
     if start is not None:
-        start_ts = pd.Timestamp(start)
-        start_ts = start_ts.tz_localize("UTC") if start_ts.tzinfo is None else start_ts.tz_convert("UTC")
-        out = out[out.index >= start_ts]
+        out = out[out.index >= to_utc_ts(start)]
     if end is not None:
-        end_ts = pd.Timestamp(end)
-        end_ts = end_ts.tz_localize("UTC") if end_ts.tzinfo is None else end_ts.tz_convert("UTC")
-        out = out[out.index <= end_ts]
+        out = out[out.index <= to_utc_ts(end)]
     return out
 
 
