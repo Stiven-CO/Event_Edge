@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 
 from backend.api.schemas import BrokerStatus
 from backend.config import Settings, get_settings
+from backend.core import cache
 from backend.data import MdhClient
 
 router = APIRouter(prefix="/api/v1/control", tags=["control"])
@@ -57,3 +58,26 @@ async def broker_status(
         BrokerStatus(source="tws",      alive=tws_alive,      mode="proxy"),
         BrokerStatus(source="yfinance", alive=yfinance_alive, mode="proxy"),
     ]
+
+
+@router.get(
+    "/cache/stats",
+    summary="Estadísticas del caché de pipelines",
+    description="Hits/misses/tamaño de los cachés de lectura de lake (L1) y features (L2).",
+)
+async def cache_stats(settings: Settings = Depends(get_settings)) -> dict:
+    return {
+        "lake_cache": cache.get_lake_cache(settings).stats(),
+        "feature_cache": cache.get_feature_cache(settings).stats(),
+    }
+
+
+@router.post(
+    "/cache/clear",
+    summary="Limpia los cachés de pipelines",
+    description="Escape hatch manual — vacía los cachés L1 (lake) y L2 (features).",
+)
+async def cache_clear() -> dict[str, str]:
+    cache.get_lake_cache().clear()
+    cache.get_feature_cache().clear()
+    return {"status": "cleared"}

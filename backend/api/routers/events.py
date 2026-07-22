@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.api.schemas import DetectEventsRequest, EventRecord
 from backend.config import Settings, get_settings
-from backend.core import data_pipeline
+from backend.core import cache
 from backend.core.conditioning_pipeline import select_raw_events
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
@@ -24,7 +24,7 @@ async def detect_events(
         resolved_source = (req.ohlcv_source or req.source or "yfinance").lower()
         resolved_asset_class = "equity" if req.ohlcv_source else req.asset_class
 
-        ohlcv_df, _ = data_pipeline.load_ohlcv(
+        ohlcv_df, _ = cache.cached_load_ohlcv(
             settings=settings,
             symbol=req.symbol,
             source=resolved_source,
@@ -40,7 +40,7 @@ async def detect_events(
             )
 
         earnings_source = (req.source or "yfinance").lower()
-        earnings_df, _ = data_pipeline.fetch_earnings_safe(settings, req.symbol, earnings_source)
+        earnings_df, _ = cache.cached_fetch_earnings_safe(settings, req.symbol, earnings_source)
 
         events = select_raw_events(
             ohlcv_df=ohlcv_df,

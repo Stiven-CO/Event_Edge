@@ -26,6 +26,16 @@ def reset_settings():
     config_module._settings = None
 
 
+@pytest.fixture(autouse=True)
+def reset_cache_state():
+    """Resetea los cachés L1/L2 de pipelines antes y después de cada test."""
+    from backend.core import cache as cache_module
+
+    cache_module.reset_caches()
+    yield
+    cache_module.reset_caches()
+
+
 @pytest.fixture
 def synthetic_ohlcv_df() -> pd.DataFrame:
     """

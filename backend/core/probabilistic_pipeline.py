@@ -27,9 +27,8 @@ from backend.api.schemas import (
     ProbabilisticResult,
 )
 from backend.config import Settings
-from backend.core import data_pipeline
+from backend.core import cache
 from backend.core.utc import to_utc_ts
-from backend.core.conditioning_pipeline import build_conditioned_dataset
 from backend.core.metrics import compute_probabilistic_metrics
 from backend.core.statistical_models import (
     BaseEventModel,
@@ -374,7 +373,7 @@ def run_probabilistic_analysis(req: AnalysisRequest, settings: Settings) -> Prob
 
     Lanza HTTPException(404) si no hay OHLCV disponible en el lake.
     """
-    ohlcv_df, source_used = data_pipeline.load_ohlcv(
+    ohlcv_df, source_used, ohlcv_fingerprint = cache.load_ohlcv_with_fingerprint(
         settings=settings,
         symbol=req.symbol,
         source=req.source,
@@ -392,11 +391,14 @@ def run_probabilistic_analysis(req: AnalysisRequest, settings: Settings) -> Prob
 
     is_fundamental = (req.event_type == EventType.earnings)
     earnings_df = None
+    earnings_fingerprint = None
     if is_fundamental:
-        earnings_df, earnings_info = data_pipeline.fetch_earnings_safe(settings, req.symbol, req.source)
+        earnings_df, earnings_info, earnings_fingerprint = cache.fetch_earnings_safe_with_fingerprint(
+            settings, req.symbol, req.source
+        )
         logger.info("[probabilistic] %s | OHLCV: %d barras | %s", req.symbol, len(ohlcv_df), earnings_info)
 
-    conditioned_df, n_total, _ = build_conditioned_dataset(
+    conditioned_df, n_total, _ = cache.cached_build_conditioned_dataset(
         ohlcv_df=ohlcv_df,
         earnings_df=earnings_df,
         event_type=req.event_type,
@@ -405,6 +407,9 @@ def run_probabilistic_analysis(req: AnalysisRequest, settings: Settings) -> Prob
         timeframe=req.timeframe,
         date_start=req.date_range_start,
         date_end=req.date_range_end,
+        ohlcv_fingerprint=ohlcv_fingerprint,
+        earnings_fingerprint=earnings_fingerprint,
+        settings=settings,
     )
     logger.info("[probabilistic] %s | condicionados: %d / %d", req.symbol, len(conditioned_df), n_total)
 

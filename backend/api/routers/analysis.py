@@ -14,8 +14,7 @@ from backend.api.schemas import (
     ProbabilisticResult,
 )
 from backend.config import Settings, get_settings
-from backend.core import data_pipeline, probabilistic_pipeline
-from backend.core.conditioning_pipeline import build_conditioned_dataset
+from backend.core import cache, probabilistic_pipeline
 from backend.core.metrics import compute_global_metrics
 
 logger = logging.getLogger(__name__)
@@ -38,7 +37,7 @@ async def informative_analysis(
     settings: Settings = Depends(get_settings),
 ) -> GlobalInformativeMetrics:
     try:
-        ohlcv_df, source_used = data_pipeline.load_ohlcv(
+        ohlcv_df, source_used = cache.cached_load_ohlcv(
             settings=settings,
             symbol=req.symbol,
             source=req.source,
@@ -102,7 +101,7 @@ async def conditioning_count(
     settings: Settings = Depends(get_settings),
 ) -> ConditioningCountResult:
     try:
-        ohlcv_df, _ = data_pipeline.load_ohlcv(
+        ohlcv_df, _, ohlcv_fingerprint = cache.load_ohlcv_with_fingerprint(
             settings=settings,
             symbol=req.symbol,
             source=req.source,
@@ -120,12 +119,15 @@ async def conditioning_count(
 
         is_fundamental = (req.event_type == EventType.earnings)
         earnings_df = None
+        earnings_fingerprint = None
         fundamental_load_info: str | None = None
         if is_fundamental:
-            earnings_df, earnings_info = data_pipeline.fetch_earnings_safe(settings, req.symbol, req.source)
+            earnings_df, earnings_info, earnings_fingerprint = cache.fetch_earnings_safe_with_fingerprint(
+                settings, req.symbol, req.source
+            )
             logger.info("[conditioning-count] %s | OHLCV: %d barras | %s", req.symbol, len(ohlcv_df), earnings_info)
 
-        conditioned_df, n_total, features_df = build_conditioned_dataset(
+        conditioned_df, n_total, features_df = cache.cached_build_conditioned_dataset(
             ohlcv_df=ohlcv_df,
             earnings_df=earnings_df,
             event_type=req.event_type,
@@ -134,6 +136,9 @@ async def conditioning_count(
             timeframe=req.timeframe,
             date_start=req.date_range_start,
             date_end=req.date_range_end,
+            ohlcv_fingerprint=ohlcv_fingerprint,
+            earnings_fingerprint=earnings_fingerprint,
+            settings=settings,
         )
         if is_fundamental:
             n_earning_days = int(features_df["take_earnings"].sum()) if not features_df.empty else 0

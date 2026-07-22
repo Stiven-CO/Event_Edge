@@ -10,8 +10,7 @@ logger = logging.getLogger(__name__)
 
 from backend.api.schemas import PriceActionRequest, PriceActionResult, EventType
 from backend.config import Settings, get_settings
-from backend.core import data_pipeline
-from backend.core.conditioning_pipeline import build_conditioned_dataset
+from backend.core import cache
 from backend.core.price_action import compute_price_action
 from backend.core.price_action.builder import MULTI_DAY_TFS
 from backend.core.utc import to_utc_ts
@@ -70,7 +69,7 @@ async def price_action_analysis(
         #    que solo lee row["date"] de events_df).
         is_fundamental = (req.event_type == EventType.earnings)
 
-        lake_ohlcv_df, _ = data_pipeline.load_ohlcv(
+        lake_ohlcv_df, _, ohlcv_fingerprint = cache.load_ohlcv_with_fingerprint(
             settings=settings,
             symbol=req.symbol,
             source=req.source,
@@ -81,10 +80,13 @@ async def price_action_analysis(
             timeframe=req.timeframe,
         )
         lake_earnings_df = None
+        earnings_fingerprint = None
         if is_fundamental:
-            lake_earnings_df, _ = data_pipeline.fetch_earnings_safe(settings, req.symbol, req.source)
+            lake_earnings_df, _, earnings_fingerprint = cache.fetch_earnings_safe_with_fingerprint(
+                settings, req.symbol, req.source
+            )
 
-        conditioned_df, _, _ = build_conditioned_dataset(
+        conditioned_df, _, _ = cache.cached_build_conditioned_dataset(
             ohlcv_df=lake_ohlcv_df,
             earnings_df=lake_earnings_df,
             event_type=req.event_type,
@@ -93,6 +95,9 @@ async def price_action_analysis(
             timeframe=req.timeframe,
             date_start=req.date_range_start,
             date_end=req.date_range_end,
+            ohlcv_fingerprint=ohlcv_fingerprint,
+            earnings_fingerprint=earnings_fingerprint,
+            settings=settings,
         )
 
         # 3. Si modo "in_event", cargar barras del TF del evento para las fechas condicionadas

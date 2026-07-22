@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     # Persistencia de análisis (objeto Edge: edge.json + return_samples.parquet)
     storage_root: str = "./data"
 
+    # Caché de pipelines (lectura de lake + features) — ver backend/core/cache.py
+    cache_lake_max_entries: int = 256
+    cache_lake_ttl_seconds: float = 1800.0
+    cache_feature_max_entries: int = 128
+    cache_feature_ttl_seconds: float = 1800.0
+
     model_config = SettingsConfigDict(
         env_prefix="EE_",
         env_file=str(_ENV_FILE),

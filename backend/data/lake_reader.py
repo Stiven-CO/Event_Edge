@@ -96,6 +96,35 @@ def _earnings_dir(
     )
 
 
+def resolve_ohlcv_path(
+    lake_root: str,
+    symbol: str,
+    source: str,
+    asset_class: str,
+    timeframe: str,
+) -> Path | None:
+    """Resuelve la ruta del parquet OHLCV sin leerlo (solo glob/stat). None si no existe.
+
+    Usado por el caché (backend.core.cache) para obtener el mtime del archivo
+    como señal de invalidación, sin pagar el costo de un read_parquet.
+    """
+    dest_dir = _ohlcv_dir(lake_root, source, asset_class, symbol, timeframe)
+    files = list(dest_dir.glob("*.parquet"))
+    return files[0] if files else None
+
+
+def resolve_earnings_path(
+    lake_root: str,
+    symbol: str,
+    source: str,
+    asset_class: str = "equity",
+) -> Path | None:
+    """Resuelve la ruta del parquet de earnings sin leerlo. None si no existe."""
+    dest_dir = _earnings_dir(lake_root, source, asset_class, symbol)
+    files = list(dest_dir.glob("*.parquet"))
+    return files[0] if files else None
+
+
 def _apply_date_filter(
     df: pd.DataFrame,
     start: datetime | None,
