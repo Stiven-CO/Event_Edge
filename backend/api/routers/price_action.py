@@ -8,10 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException
 
 logger = logging.getLogger(__name__)
 
-from backend.api.schemas import PriceActionRequest, PriceActionResult, EventType
+from backend.api.schemas import (
+    DistributionStatsResult,
+    EventType,
+    PriceActionRequest,
+    PriceActionResult,
+)
 from backend.config import Settings, get_settings
 from backend.core import cache
-from backend.core.price_action import compute_price_action
+from backend.core.price_action import compute_distribution_stats, compute_price_action
 from backend.core.price_action.builder import MULTI_DAY_TFS
 from backend.core.utc import to_utc_ts
 from backend.data import MdhClient, MdhUnavailableError, MdhValidationError
@@ -42,95 +47,9 @@ async def price_action_analysis(
     mdh_client: MdhClient = Depends(get_mdh_client),
 ) -> PriceActionResult:
     try:
-        # 1. OHLCV base — vía MDH (con ingest si no existe)
-        ohlcv_daily = await _load_ohlcv_daily(
-            symbol=req.symbol,
-            source=req.source,
-            asset_class=req.asset_class,
-            mdh_client=mdh_client,
-            date_start=req.date_range_start,
-            date_end=req.date_range_end,
-            ohlcv_source=req.ohlcv_source,
-            credentials_account=req.credentials_account,
-            timeframe=req.timeframe,
+        conditioned_df, ohlcv_daily, ohlcv_intraday, intraday_error = await _load_price_action_inputs(
+            req, settings, mdh_client
         )
-        if ohlcv_daily.empty:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No OHLCV data available for {req.symbol}",
-            )
-
-        # 2. Fechas de evento condicionadas — vía Pipeline 1 (lake) + Pipeline 2,
-        #    la misma definición de "evento" usada por /events/detect y
-        #    /analysis/probabilistic. Solo se usan las FECHAS resultantes; el
-        #    precio que efectivamente se grafica sigue viniendo de ohlcv_daily
-        #    (MDH, con auto-ingesta) — Price Action nunca expone datos
-        #    fundamentales, solo los usa como filtro de fechas (ver builder.py,
-        #    que solo lee row["date"] de events_df).
-        is_fundamental = (req.event_type == EventType.earnings)
-
-        lake_ohlcv_df, _, ohlcv_fingerprint = cache.load_ohlcv_with_fingerprint(
-            settings=settings,
-            symbol=req.symbol,
-            source=req.source,
-            asset_class=req.asset_class,
-            date_start=req.date_range_start,
-            date_end=req.date_range_end,
-            ohlcv_source=req.ohlcv_source,
-            timeframe=req.timeframe,
-        )
-        lake_earnings_df = None
-        earnings_fingerprint = None
-        if is_fundamental:
-            lake_earnings_df, _, earnings_fingerprint = cache.fetch_earnings_safe_with_fingerprint(
-                settings, req.symbol, req.source
-            )
-
-        conditioned_df, _, _ = cache.cached_build_conditioned_dataset(
-            ohlcv_df=lake_ohlcv_df,
-            earnings_df=lake_earnings_df,
-            event_type=req.event_type,
-            conditioning=req.conditioning,
-            symbol=req.symbol,
-            timeframe=req.timeframe,
-            date_start=req.date_range_start,
-            date_end=req.date_range_end,
-            ohlcv_fingerprint=ohlcv_fingerprint,
-            earnings_fingerprint=earnings_fingerprint,
-            settings=settings,
-        )
-
-        # 3. Si modo "in_event", cargar barras del TF del evento para las fechas condicionadas
-        use_intraday = req.price_action_mode == "in_event"
-        ohlcv_intraday: pd.DataFrame | None = None
-        intraday_error: str | None = None
-        if use_intraday and not conditioned_df.empty:
-            event_dates = sorted(set(
-                to_utc_ts(row["date"]).date()
-                for _, row in conditioned_df.iterrows()
-            ))
-            logger.info(
-                "[price-action] %s | in_event tf=%s | fuente=%s | ohlcv_source=%s | eventos=%d | fechas=%s",
-                req.symbol, req.event_timeframe, req.source, req.ohlcv_source, len(event_dates),
-                [d.isoformat() for d in event_dates[:5]],
-            )
-            ohlcv_intraday, intraday_error = await _load_ohlcv_intraday(
-                symbol=req.symbol,
-                source=req.source,
-                asset_class=req.asset_class,
-                mdh_client=mdh_client,
-                event_dates=event_dates,
-                ohlcv_source=req.ohlcv_source,
-                timeframe=req.event_timeframe,
-                outer_timeframe=req.timeframe,
-            )
-            logger.info(
-                "[price-action] %s | intraday recibido: %d barras%s",
-                req.symbol, len(ohlcv_intraday) if ohlcv_intraday is not None else 0,
-                f" | error={intraday_error}" if intraday_error else "",
-            )
-
-        # 4. Calcular price action
         result = compute_price_action(
             events_df=conditioned_df,
             ohlcv_daily_df=ohlcv_daily,
@@ -148,6 +67,146 @@ async def price_action_analysis(
         if settings.debug:
             raise
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post(
+    "/distribution-stats",
+    response_model=DistributionStatsResult,
+    summary="Dashboard Quant — distribución de retornos por offset",
+    description=(
+        "Complemento del Price Action Plot: para los mismos eventos condicionados, "
+        "agrupa por offset (P1…Pn en modo holding, o posición de barra en modo "
+        "inside event) la distribución de retornos (percentiles, CVaR, skew/kurtosis, "
+        "reversión alcista/bajista) y clasifica cada offset con un color e ícono."
+    ),
+)
+async def distribution_stats_analysis(
+    req: PriceActionRequest,
+    settings: Settings = Depends(get_settings),
+    mdh_client: MdhClient = Depends(get_mdh_client),
+) -> DistributionStatsResult:
+    try:
+        conditioned_df, ohlcv_daily, ohlcv_intraday, intraday_error = await _load_price_action_inputs(
+            req, settings, mdh_client
+        )
+        result = compute_distribution_stats(
+            events_df=conditioned_df,
+            ohlcv_daily_df=ohlcv_daily,
+            ohlcv_intraday_df=ohlcv_intraday,
+            n_periods=req.n_periods,
+            outer_timeframe=req.timeframe,
+        )
+        result.intraday_source_error = intraday_error
+        return result
+
+    except HTTPException:
+        raise
+    except Exception:
+        if settings.debug:
+            raise
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+async def _load_price_action_inputs(
+    req: PriceActionRequest,
+    settings: Settings,
+    mdh_client: MdhClient,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame | None, str | None]:
+    """
+    Carga compartida entre /price-action y /distribution-stats: OHLCV diario,
+    fechas de evento condicionadas y (si corresponde) OHLCV intradía.
+
+    Retorna (conditioned_df, ohlcv_daily, ohlcv_intraday, intraday_error).
+    """
+    # 1. OHLCV base — vía MDH (con ingest si no existe)
+    ohlcv_daily = await _load_ohlcv_daily(
+        symbol=req.symbol,
+        source=req.source,
+        asset_class=req.asset_class,
+        mdh_client=mdh_client,
+        date_start=req.date_range_start,
+        date_end=req.date_range_end,
+        ohlcv_source=req.ohlcv_source,
+        credentials_account=req.credentials_account,
+        timeframe=req.timeframe,
+    )
+    if ohlcv_daily.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No OHLCV data available for {req.symbol}",
+        )
+
+    # 2. Fechas de evento condicionadas — vía Pipeline 1 (lake) + Pipeline 2,
+    #    la misma definición de "evento" usada por /events/detect y
+    #    /analysis/probabilistic. Solo se usan las FECHAS resultantes; el
+    #    precio que efectivamente se grafica/agrega sigue viniendo de
+    #    ohlcv_daily (MDH, con auto-ingesta) — ni Price Action ni Dashboard
+    #    Quant exponen datos fundamentales, solo los usan como filtro de
+    #    fechas (ver builder.py, que solo lee row["date"] de events_df).
+    is_fundamental = (req.event_type == EventType.earnings)
+
+    lake_ohlcv_df, _, ohlcv_fingerprint = cache.load_ohlcv_with_fingerprint(
+        settings=settings,
+        symbol=req.symbol,
+        source=req.source,
+        asset_class=req.asset_class,
+        date_start=req.date_range_start,
+        date_end=req.date_range_end,
+        ohlcv_source=req.ohlcv_source,
+        timeframe=req.timeframe,
+    )
+    lake_earnings_df = None
+    earnings_fingerprint = None
+    if is_fundamental:
+        lake_earnings_df, _, earnings_fingerprint = cache.fetch_earnings_safe_with_fingerprint(
+            settings, req.symbol, req.source
+        )
+
+    conditioned_df, _, _ = cache.cached_build_conditioned_dataset(
+        ohlcv_df=lake_ohlcv_df,
+        earnings_df=lake_earnings_df,
+        event_type=req.event_type,
+        conditioning=req.conditioning,
+        symbol=req.symbol,
+        timeframe=req.timeframe,
+        date_start=req.date_range_start,
+        date_end=req.date_range_end,
+        ohlcv_fingerprint=ohlcv_fingerprint,
+        earnings_fingerprint=earnings_fingerprint,
+        settings=settings,
+    )
+
+    # 3. Si modo "in_event", cargar barras del TF del evento para las fechas condicionadas
+    use_intraday = req.price_action_mode == "in_event"
+    ohlcv_intraday: pd.DataFrame | None = None
+    intraday_error: str | None = None
+    if use_intraday and not conditioned_df.empty:
+        event_dates = sorted(set(
+            to_utc_ts(row["date"]).date()
+            for _, row in conditioned_df.iterrows()
+        ))
+        logger.info(
+            "[price-action] %s | in_event tf=%s | fuente=%s | ohlcv_source=%s | eventos=%d | fechas=%s",
+            req.symbol, req.event_timeframe, req.source, req.ohlcv_source, len(event_dates),
+            [d.isoformat() for d in event_dates[:5]],
+        )
+        ohlcv_intraday, intraday_error = await _load_ohlcv_intraday(
+            symbol=req.symbol,
+            source=req.source,
+            asset_class=req.asset_class,
+            mdh_client=mdh_client,
+            event_dates=event_dates,
+            ohlcv_source=req.ohlcv_source,
+            timeframe=req.event_timeframe,
+            outer_timeframe=req.timeframe,
+        )
+        logger.info(
+            "[price-action] %s | intraday recibido: %d barras%s",
+            req.symbol, len(ohlcv_intraday) if ohlcv_intraday is not None else 0,
+            f" | error={intraday_error}" if intraday_error else "",
+        )
+
+    return conditioned_df, ohlcv_daily, ohlcv_intraday, intraday_error
 
 
 async def _load_ohlcv_daily(

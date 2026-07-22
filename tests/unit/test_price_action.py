@@ -13,6 +13,7 @@ import pytest
 from backend.core.price_action.builder import (
     MIN_EVENTS_PLOT,
     _aggregate_series,
+    compute_distribution_stats,
     compute_price_action,
 )
 from backend.api.schemas import PriceActionResult
@@ -241,3 +242,110 @@ def test_series_lengths_consistent_daily():
     # Si no vacío, deben coincidir longitudes con n_periods
     if result.series_all.points:
         assert len(result.series_all.points) == 4
+
+
+# ---------------------------------------------------------------------------
+# Tests de compute_distribution_stats (Dashboard Quant)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_distribution_stats_daily_x_labels_match_price_action():
+    """Mismo events_df/n_periods → x_labels idénticos entre price-action y
+    distribution-stats (ambos paneles deben compartir eje X)."""
+    ohlcv = _make_daily_ohlcv(30)
+    events = _make_events_df(ohlcv, list(range(2, 20)))
+    price_action = compute_price_action(events, ohlcv, None, n_periods=4)
+    dist = compute_distribution_stats(events, ohlcv, None, n_periods=4)
+    assert dist.anchor_mode == "daily"
+    assert dist.x_labels == price_action.x_labels == ["P1", "P2", "P3", "P4"]
+    assert len(dist.rows) == 4
+    assert [row.offset for row in dist.rows] == [1, 2, 3, 4]
+    assert [row.label for row in dist.rows] == dist.x_labels
+
+
+@pytest.mark.unit
+def test_distribution_stats_intraday_x_labels_match_price_action():
+    """Modo inside event: mismo events_df/intraday → mismos x_labels que price-action."""
+    ohlcv = _make_daily_ohlcv(20)
+    indices = list(range(2, 18))
+    events = _make_events_df(ohlcv, indices)
+    intraday = _make_intraday([ohlcv.index[i] for i in indices])
+    price_action = compute_price_action(events, ohlcv, intraday, n_periods=0)
+    dist = compute_distribution_stats(events, ohlcv, intraday, n_periods=0)
+    assert dist.anchor_mode == "intraday_30min"
+    assert dist.x_labels == price_action.x_labels
+
+
+@pytest.mark.unit
+def test_distribution_stats_row_fields_are_finite():
+    """Cada fila debe traer métricas numéricas finitas y una clasificación válida."""
+    ohlcv = _make_daily_ohlcv(40)
+    events = _make_events_df(ohlcv, list(range(2, 30)))
+    dist = compute_distribution_stats(events, ohlcv, None, n_periods=5, tail_q=0.1)
+    assert len(dist.rows) == 5
+    for row in dist.rows:
+        for field in ("ret_mean", "ret_p25", "ret_p75", "cvar", "r_cvar",
+                       "asimetria", "curtosis", "rev_alcista_mean", "rev_alcista_p75",
+                       "rev_bajista_mean", "rev_bajista_p25", "ratio_colas"):
+            assert math.isfinite(getattr(row, field)), f"{field} no finito en offset {row.offset}"
+        assert row.color_base in ("azul", "amarillo", "coral", "blanco")
+        assert row.icon in ("", "⚡", "⚠️", "🔄")
+    # Reversión alcista/bajista simétricas: ambas ≥ 0 por construcción
+    # (h≥c y c≥l siempre, ver builder._build_offset_frame_daily)
+    for row in dist.rows:
+        assert row.rev_alcista_mean >= 0
+        assert row.rev_bajista_mean >= 0
+
+
+@pytest.mark.unit
+def test_distribution_stats_low_n_offset_forced_neutral():
+    """Offset con n_obs < MIN_EVENTS_PLOT → color_base='blanco', icon='' aunque
+    las métricas crudas (ret_mean, ratio_colas, etc.) den señales fuertes —
+    evita clasificar con confianza sobre una muestra ruidosa."""
+    ohlcv = _make_daily_ohlcv(60)
+    # 8 eventos con ventana de 6 sesiones: todas las columnas P1..P6 tienen
+    # n_obs=8 (>= MIN_EVENTS_PLOT=5), sirve de control "bien muestreado".
+    events = _make_events_df(ohlcv, list(range(2, 10)))
+    dist = compute_distribution_stats(events, ohlcv, None, n_periods=6)
+    assert len(dist.rows) == 6
+    for row in dist.rows:
+        assert row.n_obs == 8
+
+    # Forzamos un long_df sintético con un offset de n_obs=2 (ruidoso) para
+    # confirmar la salvaguarda directamente sobre _aggregate_distribution_rows.
+    from backend.core.price_action.builder import _aggregate_distribution_rows
+
+    long_df = pd.DataFrame([
+        # offset=1: 2 observaciones extremas → ratio_colas/asimetria altísimos
+        {"offset": 1, "returns": 0.10, "reversion_alcista": 0.001, "reversion_bajista": 0.001},
+        {"offset": 1, "returns": 0.11, "reversion_alcista": 0.001, "reversion_bajista": 0.001},
+        # offset=2: 6 observaciones normales → bien muestreado
+        *[{"offset": 2, "returns": r, "reversion_alcista": 0.005, "reversion_bajista": 0.005}
+          for r in [0.01, -0.01, 0.02, -0.02, 0.005, -0.005]],
+    ])
+    rows = _aggregate_distribution_rows(long_df, ["X1", "X2"], tail_q=0.05, clean_q=0.25, pain_q=0.75)
+    row_by_offset = {row.offset: row for row in rows}
+    assert row_by_offset[1].n_obs == 2
+    assert row_by_offset[1].color_base == "blanco"
+    assert row_by_offset[1].icon == ""
+    assert row_by_offset[2].n_obs == 6
+
+
+@pytest.mark.unit
+def test_distribution_stats_insufficient_events_warning():
+    """Con < MIN_EVENTS_PLOT eventos usados → warning = 'insufficient_events'."""
+    ohlcv = _make_daily_ohlcv(20)
+    events = _make_events_df(ohlcv, [5])  # solo 1 evento
+    dist = compute_distribution_stats(events, ohlcv, None, n_periods=3)
+    assert dist.n_events_used < MIN_EVENTS_PLOT
+    assert dist.warning == "insufficient_events"
+
+
+@pytest.mark.unit
+def test_distribution_stats_empty_events_no_exception():
+    """events_df vacío → filas vacías, sin excepción."""
+    ohlcv = _make_daily_ohlcv(20)
+    events = _make_events_df(ohlcv, [])
+    dist = compute_distribution_stats(events, ohlcv, None, n_periods=3)
+    assert dist.rows == []
+    assert dist.n_events_used == 0

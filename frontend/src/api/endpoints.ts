@@ -7,6 +7,7 @@ import type {
   ConditioningCountRequest,
   ConditioningCountResult,
   DetectEventsRequest,
+  DistributionStatsResult,
   EventRecord,
   GlobalInformativeMetrics,
   GlobalInformativeRequest,
@@ -40,6 +41,11 @@ export const endpoints = {
     }),
   getPriceAction: (body: PriceActionRequest) =>
     api.request<PriceActionResult>("/analysis/price-action", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getDistributionStats: (body: PriceActionRequest) =>
+    api.request<DistributionStatsResult>("/analysis/distribution-stats", {
       method: "POST",
       body: JSON.stringify(body),
     }),

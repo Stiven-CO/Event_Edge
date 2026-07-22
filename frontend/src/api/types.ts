@@ -321,6 +321,48 @@ export interface PriceActionRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Dashboard Quant — distribución por offset (complemento del price action)
+// ---------------------------------------------------------------------------
+
+export type DistributionColorBase = "azul" | "amarillo" | "coral" | "blanco";
+export type DistributionIcon = "" | "⚡" | "⚠️" | "🔄";
+
+export interface DistributionStatsRow {
+  offset: number;
+  label: string;
+  n_obs: number;
+
+  ret_mean: number;
+  ret_p25: number;
+  ret_p75: number;
+  cvar: number;
+  r_cvar: number;
+  asimetria: number;
+  curtosis: number;
+
+  rev_alcista_mean: number;
+  rev_alcista_p75: number;
+  rev_bajista_mean: number;
+  rev_bajista_p25: number;
+
+  ratio_colas: number;
+
+  color_base: DistributionColorBase;
+  icon: DistributionIcon;
+}
+
+export interface DistributionStatsResult {
+  anchor_mode: "intraday_30min" | "daily";
+  n_periods: number;
+  x_labels: string[];
+  rows: DistributionStatsRow[];
+  n_events_used: number;
+  n_events_omitted: number;
+  warning: "insufficient_events" | "some_events_omitted" | null;
+  intraday_source_error: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Persistencia — guardar Edge
 // ---------------------------------------------------------------------------
 

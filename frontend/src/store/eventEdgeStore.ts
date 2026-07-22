@@ -6,6 +6,7 @@ import type {
   BrokerStatus,
   ConditioningCountResult,
   ConditioningParams,
+  DistributionStatsResult,
   EventRecord,
   EventType,
   GlobalInformativeMetrics,
@@ -84,6 +85,7 @@ interface EventEdgeState {
   globalMetrics: GlobalInformativeMetrics | null;
   probabilisticResult: ProbabilisticResult | null;
   priceActionResult: PriceActionResult | null;
+  distributionStatsResult: DistributionStatsResult | null;
   brokerStatuses: BrokerStatus[];
   conditioningCount: ConditioningCountResult | null;
   // ── Loading / error ───────────────────────────────────────────────────────
@@ -92,6 +94,7 @@ interface EventEdgeState {
   isLoadingMetrics: boolean;
   isLoadingBrokerStatus: boolean;
   isLoadingPriceAction: boolean;
+  isLoadingDistributionStats: boolean;
   isLoadingConditioningCount: boolean;
   isSavingEdge: boolean;
   lastSavedRunId: string | null;
@@ -125,6 +128,7 @@ interface EventEdgeState {
   fetchGlobalMetrics: () => Promise<void>;
   fetchConditionedAnalysis: () => Promise<void>;
   fetchPriceAction: () => Promise<void>;
+  fetchDistributionStats: () => Promise<void>;
   fetchConditioningCount: () => Promise<void>;
   saveEdge: () => Promise<void>;
 }
@@ -167,6 +171,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   globalMetrics: null,
   probabilisticResult: null,
   priceActionResult: null,
+  distributionStatsResult: null,
   brokerStatuses: [],
   conditioningCount: null,
   // ── Loading / error ───────────────────────────────────────────────────────
@@ -175,6 +180,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   isLoadingMetrics: false,
   isLoadingBrokerStatus: false,
   isLoadingPriceAction: false,
+  isLoadingDistributionStats: false,
   isLoadingConditioningCount: false,
   isSavingEdge: false,
   lastSavedRunId: null,
@@ -206,7 +212,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   setBins: (bins) => set({ bins }),
   setConditioning: (conditioning) => set({ conditioning }),
   resetConditioning: () => set({ conditioning: defaultConditioning }),
-  clearResults: () => set({ events: [], globalMetrics: null, probabilisticResult: null, priceActionResult: null, conditioningCount: null, error: null }),
+  clearResults: () => set({ events: [], globalMetrics: null, probabilisticResult: null, priceActionResult: null, distributionStatsResult: null, conditioningCount: null, error: null }),
   setDateStart: (dateStart) => set({ dateStart }),
   setDateEnd: (dateEnd) => set({ dateEnd }),
 
@@ -380,6 +386,38 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
       set({
         isLoadingPriceAction: false,
         error: error instanceof Error ? error.message : "No se pudo cargar Price Action",
+      });
+    }
+  },
+
+  fetchDistributionStats: async () => {
+    const { symbol, source, mt5Account, ohlcvSource, typeData, eventType, conditioning, gapThreshold, includeEarningsDays, dateStart, dateEnd, assetClass, timeframe, nPeriods, priceActionMode, priceActionEventTF } = get();
+    set({ isLoadingDistributionStats: true, infoMessage: null });
+    const resolvedEventType = typeData === "fundamental" ? eventType : null;
+    try {
+      const result = await endpoints.getDistributionStats({
+        symbol,
+        source,
+        asset_class: assetClass,
+        timeframe,
+        ...(typeData === "fundamental" ? { ohlcv_source: ohlcvSource } : {}),
+        event_type: resolvedEventType,
+        gap_threshold_pct: gapThreshold,
+        include_earnings_days: resolvedEventType === "gap" ? includeEarningsDays : null,
+        n_periods: priceActionMode === "holding" ? nPeriods : 0,
+        price_action_mode: priceActionMode,
+        event_timeframe: priceActionEventTF,
+        include_bands: true,
+        conditioning: _normalizeConditioning(conditioning),
+        ...(dateStart ? { date_range_start: dateStart } : {}),
+        ...(dateEnd   ? { date_range_end:   dateEnd   } : {}),
+        ...((source === "mt5" || ohlcvSource === "mt5") ? { credentials_account: mt5Account } : {}),
+      });
+      set({ distributionStatsResult: result, isLoadingDistributionStats: false });
+    } catch (error) {
+      set({
+        isLoadingDistributionStats: false,
+        error: error instanceof Error ? error.message : "No se pudo cargar Dashboard Quant",
       });
     }
   },

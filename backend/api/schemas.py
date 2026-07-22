@@ -643,6 +643,52 @@ class PriceActionRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Responses — Dashboard Quant (distribución por offset, complemento del price action)
+# ---------------------------------------------------------------------------
+
+class DistributionStatsRow(BaseModel):
+    """Una fila (un offset) de la tabla Dashboard Quant."""
+
+    offset: int    # 1..n_periods (holding) o posición de barra (inside event)
+    label: str     # mismo x_label que usa PriceActionResult para este offset
+    n_obs: int     # observaciones (eventos) agregadas en este offset
+
+    ret_mean: float
+    ret_p25: float
+    ret_p75: float
+    cvar: float     # expected shortfall, cola izquierda (nivel tail_q)
+    r_cvar: float   # expected shortfall, cola derecha (nivel 1 - tail_q)
+    asimetria: float
+    curtosis: float
+
+    rev_alcista_mean: float
+    rev_alcista_p75: float
+    rev_bajista_mean: float
+    rev_bajista_p25: float
+
+    ratio_colas: float  # |r_cvar| / |cvar|
+
+    # Si n_obs < MIN_EVENTS_PLOT, el backend fuerza color_base="blanco" e
+    # icon="" — muestra insuficiente para clasificar con confianza (ver
+    # builder._aggregate_distribution_rows).
+    color_base: Literal["azul", "amarillo", "coral", "blanco"]
+    icon: Literal["", "⚡", "⚠️", "🔄"]
+
+
+class DistributionStatsResult(BaseModel):
+    """Respuesta para POST /api/v1/analysis/distribution-stats."""
+
+    anchor_mode: Literal["intraday_30min", "daily"]
+    n_periods: int
+    x_labels: list[str]
+    rows: list[DistributionStatsRow]
+    n_events_used: int
+    n_events_omitted: int
+    warning: str | None  # "insufficient_events" | "some_events_omitted" | None
+    intraday_source_error: str | None = None  # error de MDH al obtener datos intradía
+
+
+# ---------------------------------------------------------------------------
 # Persistencia — guardar Edge
 # ---------------------------------------------------------------------------
 

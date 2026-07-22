@@ -18,6 +18,8 @@ import numpy as np
 import pandas as pd
 
 from backend.api.schemas import (
+    DistributionStatsResult,
+    DistributionStatsRow,
     PriceActionPoint,
     PriceActionResult,
     PriceActionSeries,
@@ -368,3 +370,310 @@ def _intraday_labels(
         return labels
 
     return [str(i) for i in range(n_bars)]
+
+
+# ---------------------------------------------------------------------------
+# Distribución por offset ("Dashboard Quant") — complementa el price action
+# ---------------------------------------------------------------------------
+#
+# Mismos eventos/OHLC y mismo despacho holding/inside-event que
+# compute_price_action, pero en vez de agregar una ruta de precio normalizada
+# (mean ± 1σ), agrupa por offset la distribución de retornos (percentiles,
+# CVaR, skew/kurtosis, reversión alcista/bajista) y clasifica cada offset en
+# una fila de tabla con color e ícono. Validado primero en notebook
+# (logi_interna.ipynb / complemento.py) antes de portarlo aquí.
+
+DEFAULT_TAIL_Q = 0.05
+DEFAULT_CLEAN_Q = 0.25
+DEFAULT_PAIN_Q = 0.75
+
+
+def compute_distribution_stats(
+    events_df: pd.DataFrame,
+    ohlcv_daily_df: pd.DataFrame,
+    ohlcv_intraday_df: pd.DataFrame | None,
+    n_periods: int,
+    outer_timeframe: str = "1d",
+    tail_q: float = DEFAULT_TAIL_Q,
+    clean_q: float = DEFAULT_CLEAN_Q,
+    pain_q: float = DEFAULT_PAIN_Q,
+) -> DistributionStatsResult:
+    """
+    Construye el DistributionStatsResult ("Dashboard Quant") a partir de los mismos
+    eventos condicionados que usa compute_price_action.
+
+    Args:
+        events_df, ohlcv_daily_df, ohlcv_intraday_df, n_periods, outer_timeframe:
+            mismo significado que en compute_price_action.
+        tail_q:  nivel de cola para CVaR/r_CVaR (0.05 = percentil 5 / 95).
+        clean_q, pain_q: cuantiles usados para clasificar los íconos ⚡/⚠️ de forma
+            dinámica, sobre la magnitud de las métricas de reversión de cada offset.
+    """
+    if n_periods == 0:
+        intraday = ohlcv_intraday_df if ohlcv_intraday_df is not None else pd.DataFrame()
+        long_df, x_labels, n_omitted = _build_offset_frame_intraday(
+            events_df, ohlcv_daily_df, intraday, outer_timeframe=outer_timeframe
+        )
+        anchor_mode = "intraday_30min"
+    else:
+        long_df, x_labels, n_omitted = _build_offset_frame_daily(
+            events_df, ohlcv_daily_df, n_periods
+        )
+        anchor_mode = "daily"
+
+    n_events_used = max(len(events_df) - n_omitted, 0)
+    rows = _aggregate_distribution_rows(long_df, x_labels, tail_q, clean_q, pain_q)
+
+    return DistributionStatsResult(
+        anchor_mode=anchor_mode,
+        n_periods=n_periods,
+        x_labels=x_labels,
+        rows=rows,
+        n_events_used=n_events_used,
+        n_events_omitted=n_omitted,
+        warning=_build_warning(n_events_used, n_events_used, 0, n_omitted),
+    )
+
+
+def _build_offset_frame_daily(
+    events_df: pd.DataFrame,
+    ohlcv_daily: pd.DataFrame,
+    n_periods: int,
+) -> tuple[pd.DataFrame, list[str], int]:
+    """Modo holding: por cada evento, extrae el OHLC crudo (sin normalizar a 100,
+    a diferencia de _build_daily) de las sesiones P1→Pn siguientes y calcula sus
+    features por-barra en forma larga (una fila por evento×offset)."""
+    daily = ohlcv_daily.sort_index()
+    daily_by_date = {ts.normalize(): i for i, ts in enumerate(daily.index)}
+
+    rows: list[dict] = []
+    n_omitted = 0
+    for _, row in events_df.iterrows():
+        event_ts = to_utc_ts(row["date"])
+        pos = daily_by_date.get(event_ts.normalize())
+        if pos is None or pos + n_periods >= len(daily):
+            n_omitted += 1
+            continue
+        for offset in range(1, n_periods + 1):
+            bar = daily.iloc[pos + offset]
+            o, h, l, c = float(bar["open"]), float(bar["high"]), float(bar["low"]), float(bar["close"])
+            if math.isnan(o) or o == 0:
+                continue
+            rows.append({
+                "offset": offset,
+                "returns": (c - o) / o,
+                "reversion_alcista": (h - c) / o,
+                "reversion_bajista": (c - l) / o,
+            })
+
+    x_labels = [f"P{i}" for i in range(1, n_periods + 1)]
+    return pd.DataFrame(rows), x_labels, n_omitted
+
+
+def _build_offset_frame_intraday(
+    events_df: pd.DataFrame,
+    ohlcv_daily: pd.DataFrame,
+    ohlcv_30min: pd.DataFrame,
+    outer_timeframe: str = "1d",
+) -> tuple[pd.DataFrame, list[str], int]:
+    """Modo inside event: por cada evento, recorta las barras dentro de la ventana
+    (_get_event_window, igual que _build_intraday) y calcula las features de cada
+    barra individual (sin normalizar a 100), en forma larga (evento×posición)."""
+    is_multi_day = outer_timeframe in MULTI_DAY_TFS
+    daily_idx = ohlcv_daily.sort_index()
+    daily_by_date = {ts.normalize(): ts for ts in daily_idx.index}
+    available_dates = (
+        {str(pd.Timestamp(ts).normalize().date()) for ts in ohlcv_30min.index}
+        if not ohlcv_30min.empty else set()
+    )
+
+    bar_windows: list[pd.DataFrame] = []
+    n_omitted = 0
+
+    for _, row in events_df.iterrows():
+        event_ts = to_utc_ts(row["date"])
+        event_date_str = str(event_ts.normalize().date())
+
+        if is_multi_day:
+            window_start, window_end = _get_event_window(event_ts, outer_timeframe)
+            bars = ohlcv_30min[
+                (ohlcv_30min.index >= window_start) & (ohlcv_30min.index < window_end)
+            ].sort_index()
+            if bars.empty:
+                n_omitted += 1
+                continue
+        else:
+            daily_key = daily_by_date.get(event_ts.normalize())
+            if daily_key is None or event_date_str not in available_dates:
+                n_omitted += 1
+                continue
+            bars = ohlcv_30min[
+                ohlcv_30min.index.normalize().tz_convert("UTC") == event_ts.normalize()
+            ].sort_index()
+            if bars.empty:
+                n_omitted += 1
+                continue
+
+        bar_windows.append(bars)
+
+    n_bars = max((len(bars) for bars in bar_windows), default=0)
+
+    rows: list[dict] = []
+    for bars in bar_windows:
+        for position, (_, bar) in enumerate(bars.iterrows()):
+            o, h, l, c = float(bar["open"]), float(bar["high"]), float(bar["low"]), float(bar["close"])
+            if math.isnan(o) or o == 0:
+                continue
+            rows.append({
+                "offset": position + 1,
+                "returns": (c - o) / o,
+                "reversion_alcista": (h - c) / o,
+                "reversion_bajista": (c - l) / o,
+            })
+
+    x_labels = _intraday_labels(ohlcv_30min, events_df, n_bars, outer_timeframe)
+    return pd.DataFrame(rows), x_labels, n_omitted
+
+
+def _aggregate_distribution_rows(
+    long_df: pd.DataFrame,
+    x_labels: list[str],
+    tail_q: float,
+    clean_q: float,
+    pain_q: float,
+) -> list[DistributionStatsRow]:
+    """Agrupa long_df por offset y produce una fila por offset con percentiles,
+    CVaR, skew/kurtosis, reversión, y clasificación de color/ícono. Los umbrales
+    de ícono son dinámicos (cuantiles clean_q/pain_q de la magnitud de la
+    reversión), no valores fijos — se auto-adaptan a la escala real de los datos."""
+    if long_df.empty:
+        return []
+
+    def _q(p: float):
+        return lambda x: x.quantile(p)
+
+    def _cvar_low(q: float):
+        def f(x: pd.Series) -> float:
+            thresh = x.quantile(q)
+            return x[x < thresh].mean()
+        return f
+
+    def _cvar_high(q: float):
+        def f(x: pd.Series) -> float:
+            thresh = x.quantile(1 - q)
+            return x[x > thresh].mean()
+        return f
+
+    stats = long_df.groupby("offset").agg(
+        n_obs=("returns", "size"),
+        ret_mean=("returns", "mean"),
+        ret_p25=("returns", _q(0.25)),
+        ret_p75=("returns", _q(0.75)),
+        cvar=("returns", _cvar_low(tail_q)),
+        r_cvar=("returns", _cvar_high(tail_q)),
+        asimetria=("returns", "skew"),
+        curtosis=("returns", lambda x: x.kurtosis()),
+        rev_alcista_mean=("reversion_alcista", "mean"),
+        rev_alcista_p75=("reversion_alcista", _q(0.75)),
+        rev_bajista_mean=("reversion_bajista", "mean"),
+        rev_bajista_p25=("reversion_bajista", _q(0.25)),
+    )
+    cvar_safe = np.where(stats["cvar"] == 0, 1e-9, stats["cvar"])
+    stats["ratio_colas"] = np.abs(stats["r_cvar"]) / np.abs(cvar_safe)
+
+    # Umbrales dinámicos calculados solo sobre offsets con muestra suficiente,
+    # para que un par de columnas ruidosas (n_obs bajo) no distorsionen el
+    # corte ⚡/⚠️ del resto de la tabla.
+    well_sampled = stats[stats["n_obs"] >= MIN_EVENTS_PLOT]
+    mag_bajista = (well_sampled["rev_bajista_p25"] if not well_sampled.empty else stats["rev_bajista_p25"]).abs()
+    mag_alcista = (well_sampled["rev_alcista_p75"] if not well_sampled.empty else stats["rev_alcista_p75"]).abs()
+    umbral_limpio_bajista = mag_bajista.quantile(clean_q)
+    umbral_dolor_bajista = mag_bajista.quantile(pain_q)
+    umbral_limpio_alcista = mag_alcista.quantile(clean_q)
+    umbral_dolor_alcista = mag_alcista.quantile(pain_q)
+
+    rows: list[DistributionStatsRow] = []
+    for offset in stats.index:
+        n_obs = int(stats.loc[offset, "n_obs"])
+        ret_mean = float(stats.loc[offset, "ret_mean"])
+        ret_p25 = float(stats.loc[offset, "ret_p25"])
+        ret_p75 = float(stats.loc[offset, "ret_p75"])
+        ratio = float(stats.loc[offset, "ratio_colas"])
+        asim = float(stats.loc[offset, "asimetria"])
+        rev_bajista_p25 = float(stats.loc[offset, "rev_bajista_p25"])
+        rev_alcista_p75 = float(stats.loc[offset, "rev_alcista_p75"])
+
+        # Con menos de MIN_EVENTS_PLOT observaciones, percentiles/CVaR/skew son
+        # ruido (ver ejemplo real: ratio_colas disparado por un CVaR casi-cero
+        # calculado sobre 2-3 puntos) — no clasificar con confianza ese offset.
+        if n_obs < MIN_EVENTS_PLOT:
+            color_base, icon = "blanco", ""
+        else:
+            color_base = _classify_color(ret_mean, ret_p25, ret_p75, ratio, asim)
+            icon = _classify_icon(
+                color_base, rev_bajista_p25, rev_alcista_p75,
+                umbral_limpio_bajista, umbral_dolor_bajista,
+                umbral_limpio_alcista, umbral_dolor_alcista,
+            )
+        label = x_labels[offset - 1] if 1 <= offset <= len(x_labels) else str(offset)
+
+        rows.append(DistributionStatsRow(
+            offset=int(offset),
+            label=label,
+            n_obs=n_obs,
+            ret_mean=ret_mean,
+            ret_p25=ret_p25,
+            ret_p75=ret_p75,
+            cvar=float(stats.loc[offset, "cvar"]),
+            r_cvar=float(stats.loc[offset, "r_cvar"]),
+            asimetria=asim,
+            curtosis=float(stats.loc[offset, "curtosis"]),
+            rev_alcista_mean=float(stats.loc[offset, "rev_alcista_mean"]),
+            rev_alcista_p75=rev_alcista_p75,
+            rev_bajista_mean=float(stats.loc[offset, "rev_bajista_mean"]),
+            rev_bajista_p25=rev_bajista_p25,
+            ratio_colas=ratio,
+            color_base=color_base,
+            icon=icon,
+        ))
+    return rows
+
+
+def _classify_color(
+    ret_mean: float, ret_p25: float, ret_p75: float, ratio: float, asim: float,
+) -> str:
+    """Clasificación direccional/riesgo de cola de un offset (azul/amarillo/coral/blanco)."""
+    if ret_mean > 0 and ratio > 1.2 and asim > 0:
+        return "azul"
+    if ret_mean < 0 and ratio < 0.83 and asim < 0:
+        return "amarillo"
+    if ((ret_mean > 0 or ret_p25 > 0) and ratio < 0.83) or ((ret_mean < 0 or ret_p75 < 0) and ratio > 1.2):
+        return "coral"
+    return "blanco"
+
+
+def _classify_icon(
+    color_base: str,
+    rev_bajista_p25: float,
+    rev_alcista_p75: float,
+    umbral_limpio_bajista: float,
+    umbral_dolor_bajista: float,
+    umbral_limpio_alcista: float,
+    umbral_dolor_alcista: float,
+) -> str:
+    """Ícono de ejecución (⚡ limpio / ⚠️ doloroso / 🔄 choppy) según la magnitud
+    de la reversión relevante al color base, contra los umbrales dinámicos."""
+    if color_base == "azul":
+        if abs(rev_bajista_p25) <= umbral_limpio_bajista:
+            return "⚡"
+        if abs(rev_bajista_p25) >= umbral_dolor_bajista:
+            return "⚠️"
+    elif color_base == "amarillo":
+        if abs(rev_alcista_p75) <= umbral_limpio_alcista:
+            return "⚡"
+        if abs(rev_alcista_p75) >= umbral_dolor_alcista:
+            return "⚠️"
+    elif color_base == "blanco":
+        if abs(rev_alcista_p75) >= umbral_dolor_alcista and abs(rev_bajista_p25) >= umbral_dolor_bajista:
+            return "🔄"
+    return ""

@@ -2,12 +2,14 @@ import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { BrokerStatusBadge } from "@/components/BrokerStatusBadge";
+import { DashboardQuantTable } from "@/components/DashboardQuantTable";
 import { EarningsTable } from "@/components/EarningsTable";
 import { GlobalMetricsPanel } from "@/components/GlobalMetricsPanel";
 import { MetricsInfoPanel } from "@/components/MetricsInfoPanel";
 import { PriceActionPanel } from "@/components/PriceActionPanel";
 import { ProbabilityPanel } from "@/components/ProbabilityPanel";
 import { SidebarMenu } from "@/components/SidebarMenu";
+import { useDistributionStats } from "@/hooks/useDistributionStats";
 import { usePriceAction } from "@/hooks/usePriceAction";
 import { useEventEdgeStore } from "@/store/eventEdgeStore";
 
@@ -15,6 +17,7 @@ export function EventStudyPage() {
   const fetchBrokerStatus     = useEventEdgeStore((s) => s.fetchBrokerStatus);
   const probabilisticResult   = useEventEdgeStore((s) => s.probabilisticResult);
   const priceActionResult     = useEventEdgeStore((s) => s.priceActionResult);
+  const distributionStatsResult = useEventEdgeStore((s) => s.distributionStatsResult);
   const priceActionMode       = useEventEdgeStore((s) => s.priceActionMode);
   const priceActionEventTF    = useEventEdgeStore((s) => s.priceActionEventTF);
   const setPriceActionEventTF = useEventEdgeStore((s) => s.setPriceActionEventTF);
@@ -23,6 +26,7 @@ export function EventStudyPage() {
   const error                 = useEventEdgeStore((s) => s.error);
   const infoMessage           = useEventEdgeStore((s) => s.infoMessage);
   const { run: runPriceAction, isLoadingPriceAction } = usePriceAction();
+  const { run: runDistributionStats, isLoadingDistributionStats } = useDistributionStats();
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
@@ -130,6 +134,14 @@ export function EventStudyPage() {
               <button
                 type="button"
                 className="flex w-full items-center justify-center gap-2 rounded-lg border border-surface-border bg-surface-overlay/40 py-2 text-sm text-ink-secondary transition hover:border-accent/40 hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={isLoadingDistributionStats}
+                onClick={() => void runDistributionStats()}
+              >
+                {isLoadingDistributionStats ? "Cargando Dashboard Quant…" : "🧮 Ver Dashboard Quant"}
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-surface-border bg-surface-overlay/40 py-2 text-sm text-ink-secondary transition hover:border-accent/40 hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={isSavingEdge}
                 onClick={() => void saveEdge()}
               >
@@ -139,6 +151,7 @@ export function EventStudyPage() {
           )}
 
           {priceActionResult && <PriceActionPanel />}
+          {distributionStatsResult && <DashboardQuantTable />}
         </section>
 
       </div>
