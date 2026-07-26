@@ -29,6 +29,7 @@ from backend.api.schemas import (
 from backend.config import Settings
 from backend.core import cache
 from backend.core.utc import to_utc_ts
+from backend.core.future_returns import compute_future_return_signs
 from backend.core.metrics import compute_probabilistic_metrics
 from backend.core.statistical_models import (
     BaseEventModel,
@@ -317,33 +318,15 @@ def build_future_return_metrics(
         fwd_mean, fwd_std = _s(fwd)
         avg_forward_return[per] = {"mean": fwd_mean or 0.0, "std": fwd_std or 0.0}
 
-    return_samples: list[float] = []
-    if price_action_mode == "in_event":
-        # Retorno del propio día del evento (P0 open → close) — no hay "futuro" en este modo
-        for ts in conditioned_df["date"]:
-            ts_utc = to_utc_ts(ts)
-            loc = trading_dates.get_indexer([ts_utc], method="nearest")[0]
-            if loc < 0:
-                continue
-            found = trading_dates[loc].normalize()
-            if found != ts_utc.normalize():
-                continue
-            row_open  = float(df["open"].iloc[loc])
-            row_close = float(df["close"].iloc[loc])
-            if row_open > 0 and not (np.isnan(row_open) or np.isnan(row_close)):
-                return_samples.append((row_close - row_open) / row_open)
-    else:
-        # holding: retorno posterior P1-open → Pn-close, al período elegido
-        actual_period = max(1, n_periods)
-        for ts in conditioned_df["date"]:
-            ts_utc = to_utc_ts(ts)
-            loc = trading_dates.get_indexer([ts_utc], method="nearest")[0]
-            if loc < 0 or loc + actual_period >= len(df):
-                continue
-            open_p1  = float(df["open"].iloc[loc + 1])
-            close_pn = float(df["close"].iloc[loc + actual_period])
-            if open_p1 > 0 and not (np.isnan(open_p1) or np.isnan(close_pn)):
-                return_samples.append((close_pn - open_p1) / open_p1)
+    # Retorno firmado por evento — fuente única compartida con price_action/builder.py
+    # (compute_future_return_signs), para que N+/N- y Win/Loss nunca diverjan.
+    event_signs = compute_future_return_signs(
+        conditioned_df=conditioned_df,
+        ohlcv_df=df,
+        n_periods=n_periods,
+        price_action_mode=price_action_mode,
+    )
+    return_samples: list[float] = [v for v in event_signs.values() if v is not None]
 
     ext = _extended_stats(return_samples)
 

@@ -10,13 +10,22 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from backend.core.future_returns import compute_future_return_signs
 from backend.core.price_action.builder import (
     MIN_EVENTS_PLOT,
     _aggregate_series,
     compute_distribution_stats,
     compute_price_action,
 )
+from backend.core.utc import to_utc_ts
 from backend.api.schemas import PriceActionResult
+
+
+def _signs_for(events: pd.DataFrame, ohlcv: pd.DataFrame, n_periods: int) -> dict:
+    """event_signs derivado con la misma fuente que usa produccion (Future Return
+    Metrics), para tests que no les importa la clasificacion win/loss en si misma."""
+    mode = "in_event" if n_periods == 0 else "holding"
+    return compute_future_return_signs(events, ohlcv, n_periods=n_periods, price_action_mode=mode)
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +93,7 @@ def test_daily_normalization():
     ohlcv = _make_daily_ohlcv(20)
     # evento en posición 5; P1 debe valer close[6] / close[5] * 100
     events = _make_events_df(ohlcv, [5])
-    result = compute_price_action(events, ohlcv, None, n_periods=3)
+    result = compute_price_action(events, ohlcv, None, n_periods=3, event_signs=_signs_for(events, ohlcv, 3))
     assert result.anchor_mode == "daily"
     expected_p1 = ohlcv.iloc[6]["close"] / ohlcv.iloc[5]["close"] * 100.0
     assert math.isclose(result.series_all.points[0].y, expected_p1, rel_tol=1e-4)
@@ -97,7 +106,7 @@ def test_intraday_normalization():
     event_ts = ohlcv.index[3]
     events = _make_events_df(ohlcv, [3])
     intraday = _make_intraday([event_ts])
-    result = compute_price_action(events, ohlcv, intraday, n_periods=0)
+    result = compute_price_action(events, ohlcv, intraday, n_periods=0, event_signs=_signs_for(events, ohlcv, 0))
     assert result.anchor_mode == "intraday_30min"
     ref = ohlcv.iloc[3]["open"]
     first_close_30m = float(
@@ -114,55 +123,67 @@ def test_intraday_normalization():
 
 @pytest.mark.unit
 def test_win_loss_classification_daily():
-    """Retorno (close_Pn - close_P0)/close_P0 > 0 → win; ≤ 0 → loss."""
+    """La bucketizacion win/loss usa exactamente el signo de event_signs
+    (fuente compartida con Future Return Metrics), no un recalculo propio a
+    partir de precios — se prueba con un event_signs explicito y deterministico,
+    desacoplado de compute_future_return_signs (que se prueba por separado)."""
     ohlcv = _make_daily_ohlcv(30)
-    # Forzar un evento garantizado win y otro loss
-    # win: close[pos+n] > close[pos]
-    # Vamos a encontrar pares que cumplan esa condición de forma determinista
     n = 3
-    win_events = []
-    loss_events = []
-    for i in range(2, 25):
-        ret = (ohlcv.iloc[i + n]["close"] - ohlcv.iloc[i]["close"]) / ohlcv.iloc[i]["close"]
-        if ret > 0 and len(win_events) < 3:
-            win_events.append(i)
-        elif ret <= 0 and len(loss_events) < 3:
-            loss_events.append(i)
-        if len(win_events) >= 3 and len(loss_events) >= 3:
-            break
-
-    all_indices = win_events + loss_events
+    win_indices = [3, 6, 9]
+    loss_indices = [12, 15, 18]
+    all_indices = win_indices + loss_indices
     events = _make_events_df(ohlcv, all_indices)
-    result = compute_price_action(events, ohlcv, None, n_periods=n)
 
-    assert result.n_events_win == len(win_events)
-    assert result.n_events_loss == len(loss_events)
+    event_signs = {}
+    for i in win_indices:
+        event_signs[to_utc_ts(ohlcv.index[i])] = 0.05
+    for i in loss_indices:
+        event_signs[to_utc_ts(ohlcv.index[i])] = -0.02
+
+    result = compute_price_action(events, ohlcv, None, n_periods=n, event_signs=event_signs)
+
+    assert result.n_events_win == len(win_indices)
+    assert result.n_events_loss == len(loss_indices)
     assert result.n_events_all == len(all_indices)
 
 
 @pytest.mark.unit
 def test_win_loss_classification_intraday():
-    """(close_P0 − open_P0)/open_P0 > 0 → win; usa datos diarios, no 30min."""
+    """Modo inside event: bucketizacion win/loss via event_signs explicito,
+    desacoplado de la logica de precio (probada aparte en compute_future_return_signs)."""
     ohlcv = _make_daily_ohlcv(20)
-    # Buscar días donde close > open (win) y close <= open (loss)
-    win_idx, loss_idx = None, None
-    for i in range(2, 18):
-        if ohlcv.iloc[i]["close"] > ohlcv.iloc[i]["open"] and win_idx is None:
-            win_idx = i
-        if ohlcv.iloc[i]["close"] <= ohlcv.iloc[i]["open"] and loss_idx is None:
-            loss_idx = i
-        if win_idx and loss_idx:
-            break
-
-    if win_idx is None or loss_idx is None:
-        pytest.skip("No se encontraron días con close>open y close<=open en OHLCV sintético")
-
+    win_idx, loss_idx = 5, 10
     indices = [win_idx, loss_idx]
     events = _make_events_df(ohlcv, indices)
     intraday = _make_intraday([ohlcv.index[i] for i in indices])
-    result = compute_price_action(events, ohlcv, intraday, n_periods=0)
-    assert result.n_events_win >= 1
-    assert result.n_events_loss >= 1
+
+    event_signs = {
+        to_utc_ts(ohlcv.index[win_idx]): 0.03,
+        to_utc_ts(ohlcv.index[loss_idx]): -0.01,
+    }
+    result = compute_price_action(events, ohlcv, intraday, n_periods=0, event_signs=event_signs)
+    assert result.n_events_win == 1
+    assert result.n_events_loss == 1
+
+
+@pytest.mark.unit
+def test_win_loss_tie_and_none_excluded_but_kept_in_all():
+    """Empate (retorno == 0) o event_signs faltante (None) → el evento no entra
+    en win_series/loss_series pero sigue contando en n_events_all."""
+    ohlcv = _make_daily_ohlcv(30)
+    tie_idx, none_idx, win_idx = 3, 6, 9
+    events = _make_events_df(ohlcv, [tie_idx, none_idx, win_idx])
+
+    event_signs = {
+        to_utc_ts(ohlcv.index[tie_idx]): 0.0,
+        # none_idx deliberadamente ausente del dict -> event_signs.get(...) es None
+        to_utc_ts(ohlcv.index[win_idx]): 0.02,
+    }
+    result = compute_price_action(events, ohlcv, None, n_periods=3, event_signs=event_signs)
+
+    assert result.n_events_all == 3
+    assert result.n_events_win == 1
+    assert result.n_events_loss == 0
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +195,7 @@ def test_insufficient_events_returns_warning():
     """Con < 5 eventos → warning = 'insufficient_events'."""
     ohlcv = _make_daily_ohlcv(20)
     events = _make_events_df(ohlcv, [5])  # solo 1 evento
-    result = compute_price_action(events, ohlcv, None, n_periods=3)
+    result = compute_price_action(events, ohlcv, None, n_periods=3, event_signs={})
     assert result.warning == "insufficient_events"
 
 
@@ -184,7 +205,7 @@ def test_omit_event_without_intraday_data():
     ohlcv = _make_daily_ohlcv(10)
     events = _make_events_df(ohlcv, [3])
     # Pasar intraday vacío
-    result = compute_price_action(events, ohlcv, pd.DataFrame(), n_periods=0)
+    result = compute_price_action(events, ohlcv, pd.DataFrame(), n_periods=0, event_signs={})
     assert result.n_events_omitted >= 1
     # No debe lanzar excepción → el test llegar aquí = ok
 
@@ -214,7 +235,7 @@ def test_include_bands_false():
     """include_bands=False → band_upper y band_lower son None en todas las series."""
     ohlcv = _make_daily_ohlcv(30)
     events = _make_events_df(ohlcv, list(range(2, 20)))
-    result = compute_price_action(events, ohlcv, None, n_periods=3, include_bands=False)
+    result = compute_price_action(events, ohlcv, None, n_periods=3, event_signs={}, include_bands=False)
     assert result.series_all.band_upper is None
     assert result.series_all.band_lower is None
 
@@ -224,7 +245,7 @@ def test_daily_x_labels():
     """n_periods=3 → x_labels = ['P1', 'P2', 'P3']."""
     ohlcv = _make_daily_ohlcv(20)
     events = _make_events_df(ohlcv, list(range(2, 12)))
-    result = compute_price_action(events, ohlcv, None, n_periods=3)
+    result = compute_price_action(events, ohlcv, None, n_periods=3, event_signs={})
     assert result.x_labels == ["P1", "P2", "P3"]
 
 
@@ -233,7 +254,7 @@ def test_series_lengths_consistent_daily():
     """Todas las series (all, win, loss) tienen el mismo número de puntos."""
     ohlcv = _make_daily_ohlcv(30)
     events = _make_events_df(ohlcv, list(range(2, 20)))
-    result = compute_price_action(events, ohlcv, None, n_periods=4)
+    result = compute_price_action(events, ohlcv, None, n_periods=4, event_signs=_signs_for(events, ohlcv, 4))
     lens = {
         len(result.series_all.points),
         len(result.series_win.points) or None,
@@ -254,7 +275,7 @@ def test_distribution_stats_daily_x_labels_match_price_action():
     distribution-stats (ambos paneles deben compartir eje X)."""
     ohlcv = _make_daily_ohlcv(30)
     events = _make_events_df(ohlcv, list(range(2, 20)))
-    price_action = compute_price_action(events, ohlcv, None, n_periods=4)
+    price_action = compute_price_action(events, ohlcv, None, n_periods=4, event_signs={})
     dist = compute_distribution_stats(events, ohlcv, None, n_periods=4)
     assert dist.anchor_mode == "daily"
     assert dist.x_labels == price_action.x_labels == ["P1", "P2", "P3", "P4"]
@@ -270,7 +291,7 @@ def test_distribution_stats_intraday_x_labels_match_price_action():
     indices = list(range(2, 18))
     events = _make_events_df(ohlcv, indices)
     intraday = _make_intraday([ohlcv.index[i] for i in indices])
-    price_action = compute_price_action(events, ohlcv, intraday, n_periods=0)
+    price_action = compute_price_action(events, ohlcv, intraday, n_periods=0, event_signs={})
     dist = compute_distribution_stats(events, ohlcv, intraday, n_periods=0)
     assert dist.anchor_mode == "intraday_30min"
     assert dist.x_labels == price_action.x_labels

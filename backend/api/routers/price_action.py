@@ -16,6 +16,7 @@ from backend.api.schemas import (
 )
 from backend.config import Settings, get_settings
 from backend.core import cache
+from backend.core.future_returns import compute_future_return_signs
 from backend.core.price_action import compute_distribution_stats, compute_price_action
 from backend.core.price_action.builder import MULTI_DAY_TFS
 from backend.core.utc import to_utc_ts
@@ -50,11 +51,20 @@ async def price_action_analysis(
         conditioned_df, ohlcv_daily, ohlcv_intraday, intraday_error = await _load_price_action_inputs(
             req, settings, mdh_client
         )
+        # Misma fuente de signo por evento que Future Return Metrics (N+/N-),
+        # para que el Win/Loss de Price Action nunca diverja de esas métricas.
+        event_signs = compute_future_return_signs(
+            conditioned_df=conditioned_df,
+            ohlcv_df=ohlcv_daily,
+            n_periods=req.n_periods,
+            price_action_mode=req.price_action_mode,
+        )
         result = compute_price_action(
             events_df=conditioned_df,
             ohlcv_daily_df=ohlcv_daily,
             ohlcv_intraday_df=ohlcv_intraday,
             n_periods=req.n_periods,
+            event_signs=event_signs,
             include_bands=req.include_bands,
             outer_timeframe=req.timeframe,
         )

@@ -2,10 +2,15 @@
 Lógica de alineación, normalización y agregación para el Price Action Plot.
 
 Reglas de diseño:
-    - n_periods == 0 → modo intraday (barras de 30 min del día del evento)
-    - n_periods  > 0 → modo daily (sesiones P1 → Pn; P0 excluido)
+    - n_periods == 0 → modo intraday (barras de TF intra event)
+    - n_periods  > 0 → modo holgind (sesiones P1 → Pn; P0 excluido)
     - Normalización: precio(t) / referencia × 100  (referencia = 100)
-    - Clasificación win/loss usa siempre datos DIARIOS
+    - Clasificación win/loss NO se recalcula aquí: se recibe como `event_signs`
+      (dict event_ts -> retorno firmado | None), calculado por
+      backend.core.future_returns.compute_future_return_signs — la misma fuente
+      que usa build_future_return_metrics (N+/N-) — para que ambos paneles de la
+      UI coincidan siempre. Empate (retorno == 0) o sign None → el evento queda
+      fuera de win_series/loss_series pero sigue en all_series.
     - Eventos sin datos intradía → omitidos silenciosamente (n_events_omitted)
     - Umbral mínimo MIN_EVENTS_PLOT = 5 (igual que MIN_SAMPLES probabilístico)
 """
@@ -61,6 +66,7 @@ def compute_price_action(
     ohlcv_daily_df: pd.DataFrame,
     ohlcv_intraday_df: pd.DataFrame | None,
     n_periods: int,
+    event_signs: dict[pd.Timestamp, float | None],
     include_bands: bool = True,
     outer_timeframe: str = "1d",
 ) -> PriceActionResult:
@@ -72,6 +78,9 @@ def compute_price_action(
         ohlcv_daily_df:    OHLCV diario con DatetimeIndex UTC.
         ohlcv_intraday_df: OHLCV del TF del evento con DatetimeIndex UTC; None si n_periods > 0.
         n_periods:         Horizonte (0 = inside event, >0 = daily holding).
+        event_signs:       dict event_ts (UTC) -> retorno firmado | None, de
+                           backend.core.future_returns.compute_future_return_signs —
+                           fuente única de win/loss, compartida con Future Return Metrics.
         include_bands:     Si False, no calcular std; devolver band_upper/lower = None.
         outer_timeframe:   TF del análisis condicionado (ej. "1d", "1mo"). Determina la
                            ventana de barras a extraer en modo inside event.
@@ -79,8 +88,8 @@ def compute_price_action(
     if n_periods == 0:
         intraday = ohlcv_intraday_df if ohlcv_intraday_df is not None else pd.DataFrame()
         return _build_intraday(events_df, ohlcv_daily_df, intraday, include_bands,
-                               outer_timeframe=outer_timeframe)
-    return _build_daily(events_df, ohlcv_daily_df, n_periods, include_bands)
+                               event_signs=event_signs, outer_timeframe=outer_timeframe)
+    return _build_daily(events_df, ohlcv_daily_df, n_periods, include_bands, event_signs=event_signs)
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +101,7 @@ def _build_intraday(
     ohlcv_daily: pd.DataFrame,
     ohlcv_30min: pd.DataFrame,
     include_bands: bool,
+    event_signs: dict[pd.Timestamp, float | None],
     outer_timeframe: str = "1d",
 ) -> PriceActionResult:
     is_multi_day = outer_timeframe in MULTI_DAY_TFS
@@ -140,10 +150,6 @@ def _build_intraday(
                 n_omitted += 1
                 continue
 
-            # Win/loss = retorno completo del período
-            close_last = float(bars["close"].iloc[-1])
-            is_win = (close_last - ref) / ref > 0
-
         else:
             # Caso original: ventana = exactamente el día del evento (30m, etc.)
             daily_key = daily_by_date_intraday.get(event_ts.normalize())
@@ -157,9 +163,6 @@ def _build_intraday(
                 n_omitted += 1
                 logger.warning("[_build_intraday] Evento %s tiene open diario inválido (%.4f); omitido", event_date_str, ref)
                 continue
-
-            close_p0 = float(daily_idx.loc[daily_key, "close"])
-            is_win = (close_p0 - ref) / ref > 0
 
             if event_date_str not in available_dates:
                 n_omitted += 1
@@ -179,10 +182,12 @@ def _build_intraday(
 
         norm = [float(c) / ref * 100.0 for c in bars["close"].tolist()]
         all_series.append(norm)
-        if is_win:
+        sign = event_signs.get(event_ts)
+        if sign is not None and sign > 0:
             win_series.append(norm)
-        else:
+        elif sign is not None and sign < 0:
             loss_series.append(norm)
+        # sign is None (sin dato) o == 0 (empate) → queda solo en all_series
 
     logger.info(
         "[_build_intraday] outer_tf=%s | %d eventos procesados, %d omitidos",
@@ -222,6 +227,7 @@ def _build_daily(
     ohlcv_daily: pd.DataFrame,
     n_periods: int,
     include_bands: bool,
+    event_signs: dict[pd.Timestamp, float | None],
 ) -> PriceActionResult:
     daily = ohlcv_daily.sort_index()
     daily_by_date = {ts.normalize(): i for i, ts in enumerate(daily.index)}
@@ -245,10 +251,6 @@ def _build_daily(
         if math.isnan(ref) or ref == 0:
             continue
 
-        # Clasificar win/loss: retorno (close_Pn - close_P0) / close_P0
-        close_pn = float(daily.iloc[end_pos]["close"])
-        is_win = (close_pn - ref) / ref > 0
-
         # Normalizar P1 → Pn (P0 excluido)
         norm: list[float] = []
         for offset in range(1, n_periods + 1):
@@ -256,10 +258,12 @@ def _build_daily(
             norm.append(c / ref * 100.0)
 
         all_series.append(norm)
-        if is_win:
+        sign = event_signs.get(event_ts)
+        if sign is not None and sign > 0:
             win_series.append(norm)
-        else:
+        elif sign is not None and sign < 0:
             loss_series.append(norm)
+        # sign is None (sin dato) o == 0 (empate) → queda solo en all_series
 
     x_labels = [f"P{i}" for i in range(1, n_periods + 1)]
 
@@ -301,13 +305,6 @@ def _aggregate_series(series: list[list[float]], include_bands: bool) -> PriceAc
     lower = [PriceActionPoint(x=i, y=round(float(mean_arr[i] - std_arr[i]), 4)) for i in range(n_bars)]
 
     return PriceActionSeries(points=points, band_upper=upper, band_lower=lower)
-
-
-def _min_length(series: list[list[float]]) -> int:
-    """Retorna el mínimo largo de todas las series; 0 si la lista está vacía."""
-    if not series:
-        return 0
-    return min(len(s) for s in series)
 
 
 def _max_length(series: list[list[float]]) -> int:
