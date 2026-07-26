@@ -1,7 +1,7 @@
 """
 Test de acuerdo cruzado: para el mismo conjunto de eventos condicionados,
 Future Return Metrics (N+/N-) y Price Action (Win/Loss) deben coincidir
-exactamente, en ambos modos (in_event y holding). Este es el contrato que
+exactamente, en ambos modos (inside_event y holding). Este es el contrato que
 motivó backend/core/future_returns.py — antes cada uno recalculaba su propio
 signo por evento con una referencia de precio distinta y divergían.
 """
@@ -16,7 +16,7 @@ from backend.core.price_action.builder import compute_price_action
 from backend.core.probabilistic_pipeline import build_future_return_metrics
 
 
-def _make_daily_ohlcv(n: int = 40, base_close: float = 100.0) -> pd.DataFrame:
+def _make_ohlcv(n: int = 40, base_close: float = 100.0) -> pd.DataFrame:
     dates = pd.bdate_range("2023-01-03", periods=n, freq="B", tz="UTC")
     rng = np.random.default_rng(42)
     close = base_close * np.cumprod(1 + rng.normal(0.001, 0.015, n))
@@ -30,9 +30,9 @@ def _make_events_df(ohlcv: pd.DataFrame, indices: list[int]) -> pd.DataFrame:
     return pd.DataFrame([{"date": ohlcv.index[i]} for i in indices])
 
 
-def _make_intraday(event_dates: list[pd.Timestamp], bars_per_day: int = 13) -> pd.DataFrame:
+def _make_event_tf_bars(event_dates: list[pd.Timestamp], bars_per_day: int = 13) -> pd.DataFrame:
     """Barras de 30min sinteticas para los dias de evento (requerido por el
-    modo in_event de compute_price_action, incluso cuando el signo de
+    modo inside_event de compute_price_action, incluso cuando el signo de
     win/loss ahora viene de event_signs y no de estas barras)."""
     rows = []
     idx = []
@@ -52,10 +52,10 @@ def _make_intraday(event_dates: list[pd.Timestamp], bars_per_day: int = 13) -> p
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "price_action_mode,n_periods",
-    [("in_event", 0), ("holding", 5)],
+    [("inside_event", 0), ("holding", 5)],
 )
 def test_win_loss_matches_future_return_counts(price_action_mode, n_periods):
-    ohlcv = _make_daily_ohlcv(40)
+    ohlcv = _make_ohlcv(40)
     events = _make_events_df(ohlcv, list(range(2, 30)))
 
     future = build_future_return_metrics(
@@ -66,9 +66,9 @@ def test_win_loss_matches_future_return_counts(price_action_mode, n_periods):
         conditioned_df=events, ohlcv_df=ohlcv,
         n_periods=n_periods, price_action_mode=price_action_mode,
     )
-    intraday = _make_intraday(list(events["date"])) if price_action_mode == "in_event" else None
+    intraday = _make_event_tf_bars(list(events["date"])) if price_action_mode == "inside_event" else None
     price_action = compute_price_action(
-        events_df=events, ohlcv_daily_df=ohlcv, ohlcv_intraday_df=intraday,
+        events_df=events, ohlcv_outer_df=ohlcv, ohlcv_event_tf=intraday,
         n_periods=n_periods, event_signs=event_signs, include_bands=False,
         outer_timeframe="1d",
     )

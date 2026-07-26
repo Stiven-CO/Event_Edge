@@ -269,8 +269,8 @@ export interface AnalysisRequest {
   date_range_end?: string;
   credentials_account?: string;
   // Determina qué representa future_return_metrics: "holding" → retorno
-  // posterior al evento (P1→Pn); "in_event" → retorno del propio día del evento.
-  price_action_mode?: "holding" | "in_event";
+  // posterior al evento (P1→Pn); "inside_event" → retorno del propio día del evento.
+  price_action_mode?: "holding" | "inside_event";
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +289,7 @@ export interface PriceActionSeries {
 }
 
 export interface PriceActionResult {
-  anchor_mode: "intraday_30min" | "daily";
+  anchor_mode: "inside_event" | "holding";
   n_periods: number;
   x_labels: string[];
   series_all:  PriceActionSeries;
@@ -314,7 +314,7 @@ export interface PriceActionRequest {
   include_earnings_days?: boolean | null;
   n_periods: number;
   include_bands: boolean;
-  price_action_mode?: "holding" | "in_event";
+  price_action_mode?: "holding" | "inside_event";
   event_timeframe?: string;
   conditioning: ConditioningParams;
   credentials_account?: string;
@@ -352,7 +352,7 @@ export interface DistributionStatsRow {
 }
 
 export interface DistributionStatsResult {
-  anchor_mode: "intraday_30min" | "daily";
+  anchor_mode: "inside_event" | "holding";
   n_periods: number;
   x_labels: string[];
   rows: DistributionStatsRow[];
@@ -382,7 +382,7 @@ export interface SaveEdgeRequest {
   date_range_start?: string;
   date_range_end?: string;
   credentials_account?: string;
-  price_action_mode?: "holding" | "in_event";
+  price_action_mode?: "holding" | "inside_event";
 }
 
 export interface SaveEdgeResponse {

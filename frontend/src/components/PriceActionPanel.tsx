@@ -127,7 +127,7 @@ export function PriceActionPanel() {
     loss: n_events_loss,
   };
 
-  const modeLabel = priceActionMode === "in_event"
+  const modeLabel = priceActionMode === "inside_event"
     ? `Inside Event (${priceActionEventTF})`
     : `Holding P1–P${n_periods}`;
 
@@ -155,8 +155,8 @@ export function PriceActionPanel() {
 
         {/* Controles */}
         <div className="flex items-center gap-3">
-          {/* TF selector — solo en modo in_event */}
-          {priceActionMode === "in_event" && (
+          {/* TF selector — solo en modo inside_event */}
+          {priceActionMode === "inside_event" && (
             <div className="flex items-center gap-1.5 text-xs">
               <span className="text-ink-muted">TF evento:</span>
               <select

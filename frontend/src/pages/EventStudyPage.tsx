@@ -106,7 +106,7 @@ export function EventStudyPage() {
 
           {probabilisticResult && (
             <div className="mt-3 flex flex-col gap-2">
-              {priceActionMode === "in_event" && (
+              {priceActionMode === "inside_event" && (
                 <div className="flex items-center gap-2 rounded-lg border border-surface-border bg-surface-overlay/20 px-3 py-2 text-xs">
                   <span className="text-ink-muted">Timeframe del evento:</span>
                   <select

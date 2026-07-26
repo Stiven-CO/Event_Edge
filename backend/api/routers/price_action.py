@@ -24,8 +24,6 @@ from backend.data import MdhClient, MdhUnavailableError, MdhValidationError
 
 router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
 
-_INTRADAY_TFS = {"1m", "5m", "15m", "30m", "1h", "4h"}
-
 
 def get_mdh_client(settings: Settings = Depends(get_settings)) -> MdhClient:
     return MdhClient(settings.mdh_base_url, settings.mdh_api_key)
@@ -48,21 +46,21 @@ async def price_action_analysis(
     mdh_client: MdhClient = Depends(get_mdh_client),
 ) -> PriceActionResult:
     try:
-        conditioned_df, ohlcv_daily, ohlcv_intraday, intraday_error = await _load_price_action_inputs(
+        conditioned_df, ohlcv_outer, ohlcv_event_tf, intraday_error = await _load_price_action_inputs(
             req, settings, mdh_client
         )
         # Misma fuente de signo por evento que Future Return Metrics (N+/N-),
         # para que el Win/Loss de Price Action nunca diverja de esas métricas.
         event_signs = compute_future_return_signs(
             conditioned_df=conditioned_df,
-            ohlcv_df=ohlcv_daily,
+            ohlcv_df=ohlcv_outer,
             n_periods=req.n_periods,
             price_action_mode=req.price_action_mode,
         )
         result = compute_price_action(
             events_df=conditioned_df,
-            ohlcv_daily_df=ohlcv_daily,
-            ohlcv_intraday_df=ohlcv_intraday,
+            ohlcv_outer_df=ohlcv_outer,
+            ohlcv_event_tf=ohlcv_event_tf,
             n_periods=req.n_periods,
             event_signs=event_signs,
             include_bands=req.include_bands,
@@ -96,13 +94,13 @@ async def distribution_stats_analysis(
     mdh_client: MdhClient = Depends(get_mdh_client),
 ) -> DistributionStatsResult:
     try:
-        conditioned_df, ohlcv_daily, ohlcv_intraday, intraday_error = await _load_price_action_inputs(
+        conditioned_df, ohlcv_outer, ohlcv_event_tf, intraday_error = await _load_price_action_inputs(
             req, settings, mdh_client
         )
         result = compute_distribution_stats(
             events_df=conditioned_df,
-            ohlcv_daily_df=ohlcv_daily,
-            ohlcv_intraday_df=ohlcv_intraday,
+            ohlcv_outer_df=ohlcv_outer,
+            ohlcv_event_tf=ohlcv_event_tf,
             n_periods=req.n_periods,
             outer_timeframe=req.timeframe,
         )
@@ -126,10 +124,10 @@ async def _load_price_action_inputs(
     Carga compartida entre /price-action y /distribution-stats: OHLCV diario,
     fechas de evento condicionadas y (si corresponde) OHLCV intradía.
 
-    Retorna (conditioned_df, ohlcv_daily, ohlcv_intraday, intraday_error).
+    Retorna (conditioned_df, ohlcv_outer, ohlcv_event_tf, intraday_error).
     """
     # 1. OHLCV base — vía MDH (con ingest si no existe)
-    ohlcv_daily = await _load_ohlcv_daily(
+    ohlcv_outer = await _load_ohlcv_outer(
         symbol=req.symbol,
         source=req.source,
         asset_class=req.asset_class,
@@ -140,7 +138,7 @@ async def _load_price_action_inputs(
         credentials_account=req.credentials_account,
         timeframe=req.timeframe,
     )
-    if ohlcv_daily.empty:
+    if ohlcv_outer.empty:
         raise HTTPException(
             status_code=404,
             detail=f"No OHLCV data available for {req.symbol}",
@@ -150,7 +148,7 @@ async def _load_price_action_inputs(
     #    la misma definición de "evento" usada por /events/detect y
     #    /analysis/probabilistic. Solo se usan las FECHAS resultantes; el
     #    precio que efectivamente se grafica/agrega sigue viniendo de
-    #    ohlcv_daily (MDH, con auto-ingesta) — ni Price Action ni Dashboard
+    #    ohlcv_outer (MDH, con auto-ingesta) — ni Price Action ni Dashboard
     #    Quant exponen datos fundamentales, solo los usan como filtro de
     #    fechas (ver builder.py, que solo lee row["date"] de events_df).
     is_fundamental = (req.event_type == EventType.earnings)
@@ -186,21 +184,21 @@ async def _load_price_action_inputs(
         settings=settings,
     )
 
-    # 3. Si modo "in_event", cargar barras del TF del evento para las fechas condicionadas
-    use_intraday = req.price_action_mode == "in_event"
-    ohlcv_intraday: pd.DataFrame | None = None
+    # 3. Si modo "inside_event", cargar barras del TF del evento para las fechas condicionadas
+    use_event_tf_bars = req.price_action_mode == "inside_event"
+    ohlcv_event_tf: pd.DataFrame | None = None
     intraday_error: str | None = None
-    if use_intraday and not conditioned_df.empty:
+    if use_event_tf_bars and not conditioned_df.empty:
         event_dates = sorted(set(
             to_utc_ts(row["date"]).date()
             for _, row in conditioned_df.iterrows()
         ))
         logger.info(
-            "[price-action] %s | in_event tf=%s | fuente=%s | ohlcv_source=%s | eventos=%d | fechas=%s",
+            "[price-action] %s | inside_event tf=%s | fuente=%s | ohlcv_source=%s | eventos=%d | fechas=%s",
             req.symbol, req.event_timeframe, req.source, req.ohlcv_source, len(event_dates),
             [d.isoformat() for d in event_dates[:5]],
         )
-        ohlcv_intraday, intraday_error = await _load_ohlcv_intraday(
+        ohlcv_event_tf, intraday_error = await _load_ohlcv_event_tf(
             symbol=req.symbol,
             source=req.source,
             asset_class=req.asset_class,
@@ -212,14 +210,14 @@ async def _load_price_action_inputs(
         )
         logger.info(
             "[price-action] %s | intraday recibido: %d barras%s",
-            req.symbol, len(ohlcv_intraday) if ohlcv_intraday is not None else 0,
+            req.symbol, len(ohlcv_event_tf) if ohlcv_event_tf is not None else 0,
             f" | error={intraday_error}" if intraday_error else "",
         )
 
-    return conditioned_df, ohlcv_daily, ohlcv_intraday, intraday_error
+    return conditioned_df, ohlcv_outer, ohlcv_event_tf, intraday_error
 
 
-async def _load_ohlcv_daily(
+async def _load_ohlcv_outer(
     symbol: str,
     source: str,
     asset_class: str,
@@ -293,7 +291,7 @@ async def _load_ohlcv_daily(
         )
 
 
-async def _load_ohlcv_intraday(
+async def _load_ohlcv_event_tf(
     symbol: str,
     source: str,
     asset_class: str,
@@ -345,23 +343,23 @@ async def _load_ohlcv_intraday(
                 filtered = df_complete[mask]
             if not filtered.empty:
                 logger.info(
-                    "[_load_ohlcv_intraday] %s | complete_historical tf=%s → %d barras en %d fechas",
+                    "[_load_ohlcv_event_tf] %s | complete_historical tf=%s → %d barras en %d fechas",
                     symbol, timeframe, len(filtered), len(event_date_set),
                 )
                 return filtered, None
             logger.info(
-                "[_load_ohlcv_intraday] %s | complete_historical tf=%s existe pero sin barras en fechas de evento → fallback",
+                "[_load_ohlcv_event_tf] %s | complete_historical tf=%s existe pero sin barras en fechas de evento → fallback",
                 symbol, timeframe,
             )
     except MdhUnavailableError:
         logger.warning(
-            "[_load_ohlcv_intraday] %s | MDH no disponible al consultar complete_historical tf=%s → fallback",
+            "[_load_ohlcv_event_tf] %s | MDH no disponible al consultar complete_historical tf=%s → fallback",
             symbol, timeframe,
         )
 
     # ── Paso 2: fallback a query_ohlcv_for_event_dates ──────────────────
     logger.info(
-        "[_load_ohlcv_intraday] %s | query_ohlcv_for_event_dates tf=%s | %d fechas",
+        "[_load_ohlcv_event_tf] %s | query_ohlcv_for_event_dates tf=%s | %d fechas",
         symbol, timeframe, len(date_strs),
     )
     try:
@@ -373,14 +371,14 @@ async def _load_ohlcv_intraday(
             event_dates=date_strs,
         )
         logger.info(
-            "[_load_ohlcv_intraday] %s | fallback OK → %d barras",
+            "[_load_ohlcv_event_tf] %s | fallback OK → %d barras",
             symbol, len(df),
         )
         return df, None
     except MdhUnavailableError as exc:
         error_msg = str(exc)
         logger.warning(
-            "[_load_ohlcv_intraday] %s | ambos paths fallaron (source=%s): %s",
+            "[_load_ohlcv_event_tf] %s | ambos paths fallaron (source=%s): %s",
             symbol, resolved_source, error_msg,
         )
         return pd.DataFrame(), error_msg

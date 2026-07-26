@@ -57,7 +57,7 @@ Períodos fijos `[1, 3, 5, 10]` sesiones. Usa `P1-open → Pn-close`: el retorno
 
 **Nota de fiabilidad**: `return_skewness`/`return_kurtosis` son estadísticamente poco confiables con muestras pequeñas (n<10-20) aunque scipy los calcule desde n=3/4. La UI muestra `n_conditioned_events` junto a estas métricas para que el usuario juzgue la confiabilidad.
 
-**Nota conocida — divergencia con Price Action**: `return_count_positive`/`return_count_negative` (mostrado como "N+ / N−" en la UI) usa siempre la referencia `P1-open → Pn-close`. El panel de Price Action (`backend/core/price_action/builder.py`) clasifica win/loss con una referencia distinta según el modo (`P0-close → Pn-close` en modo `holding`; ventana intradía del evento en modo `in_event` — ver sección 5). Por eso ambos conteos **pueden no coincidir** para el mismo símbolo/condicionamiento: son dos métricas con metodologías de cálculo diferentes, no un bug. Unificar ambas referencias fue evaluado y revertido en esta fase por decisión del usuario (cambio de mayor alcance, pendiente para una iteración futura si se decide abordarlo).
+**Nota conocida — divergencia con Price Action**: `return_count_positive`/`return_count_negative` (mostrado como "N+ / N−" en la UI) usa siempre la referencia `P1-open → Pn-close`. El panel de Price Action (`backend/core/price_action/builder.py`) clasifica win/loss con una referencia distinta según el modo (`P0-close → Pn-close` en modo `holding`; ventana intradía del evento en modo `inside_event` — ver sección 5). Por eso ambos conteos **pueden no coincidir** para el mismo símbolo/condicionamiento: son dos métricas con metodologías de cálculo diferentes, no un bug. Unificar ambas referencias fue evaluado y revertido en esta fase por decisión del usuario (cambio de mayor alcance, pendiente para una iteración futura si se decide abordarlo).
 
 ---
 
@@ -77,11 +77,11 @@ Módulo: `backend/core/metrics/probabilistic.py::compute_probabilistic_metrics`.
 Módulo: `backend/core/price_action/builder.py::compute_price_action`. Endpoint: `POST /api/v1/analysis/price-action`.
 
 - Clasifica cada evento condicionado en `win`/`loss` según el modo activo:
-  - `holding` (n_periods>0): referencia `close(P0) → close(Pn)` — `_build_daily`.
-  - `in_event` (n_periods=0), ventana de un día: referencia `open(P0) → close(P0)` — `_build_intraday`.
-  - `in_event`, ventana multi-día (`outer_timeframe` en `{"1w","1mo","3mo","6mo","1y"}`): referencia `open` de la primera barra de la ventana → `close` de la última barra.
+  - `holding` (n_periods>0): referencia `close(P0) → close(Pn)` — `_build_holding`.
+  - `inside_event` (n_periods=0), ventana de un día: referencia `open(P0) → close(P0)` — `_build_inside_event`.
+  - `inside_event`, ventana multi-día (`outer_timeframe` en `{"1w","1mo","3mo","6mo","1y"}`): referencia `open` de la primera barra de la ventana → `close` de la última barra.
 - Normaliza el precio de cada evento a índice 100 en el punto de referencia, y agrega media + bandas ±1σ por grupo (`all`/`win`/`loss`) vía `_aggregate_series`.
-- `n_events_omitted` cuenta eventos sin datos intradía disponibles (solo relevante en modo `in_event`).
+- `n_events_omitted` cuenta eventos sin datos intradía disponibles (solo relevante en modo `inside_event`).
 - `warning` es `"insufficient_events"` si `n_events_all < MIN_EVENTS_PLOT` (5), o `"some_events_omitted"` si hubo eventos omitidos.
 
 ---

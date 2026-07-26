@@ -24,7 +24,7 @@ from backend.api.schemas import PriceActionResult
 def _signs_for(events: pd.DataFrame, ohlcv: pd.DataFrame, n_periods: int) -> dict:
     """event_signs derivado con la misma fuente que usa produccion (Future Return
     Metrics), para tests que no les importa la clasificacion win/loss en si misma."""
-    mode = "in_event" if n_periods == 0 else "holding"
+    mode = "inside_event" if n_periods == 0 else "holding"
     return compute_future_return_signs(events, ohlcv, n_periods=n_periods, price_action_mode=mode)
 
 
@@ -32,7 +32,7 @@ def _signs_for(events: pd.DataFrame, ohlcv: pd.DataFrame, n_periods: int) -> dic
 # Fixtures locales
 # ---------------------------------------------------------------------------
 
-def _make_daily_ohlcv(n: int = 30, base_close: float = 100.0) -> pd.DataFrame:
+def _make_ohlcv(n: int = 30, base_close: float = 100.0) -> pd.DataFrame:
     dates = pd.bdate_range("2023-01-03", periods=n, freq="B", tz="UTC")
     rng = np.random.default_rng(0)
     close = base_close * np.cumprod(1 + rng.normal(0.001, 0.01, n))
@@ -58,7 +58,7 @@ def _make_events_df(ohlcv: pd.DataFrame, indices: list[int]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _make_intraday(event_dates: list[pd.Timestamp], bars_per_day: int = 13) -> pd.DataFrame:
+def _make_event_tf_bars(event_dates: list[pd.Timestamp], bars_per_day: int = 13) -> pd.DataFrame:
     """Genera barras de 30min para los días indicados (9:30–15:30, 13 barras)."""
     rows = []
     rng = np.random.default_rng(1)
@@ -89,12 +89,12 @@ def _make_intraday(event_dates: list[pd.Timestamp], bars_per_day: int = 13) -> p
 
 @pytest.mark.unit
 def test_daily_normalization():
-    """close_P0 = referencia → primer punto de la serie daily normalizado a 100."""
-    ohlcv = _make_daily_ohlcv(20)
+    """close_P0 = referencia → primer punto de la serie holding normalizado a 100."""
+    ohlcv = _make_ohlcv(20)
     # evento en posición 5; P1 debe valer close[6] / close[5] * 100
     events = _make_events_df(ohlcv, [5])
     result = compute_price_action(events, ohlcv, None, n_periods=3, event_signs=_signs_for(events, ohlcv, 3))
-    assert result.anchor_mode == "daily"
+    assert result.anchor_mode == "holding"
     expected_p1 = ohlcv.iloc[6]["close"] / ohlcv.iloc[5]["close"] * 100.0
     assert math.isclose(result.series_all.points[0].y, expected_p1, rel_tol=1e-4)
 
@@ -102,12 +102,12 @@ def test_daily_normalization():
 @pytest.mark.unit
 def test_intraday_normalization():
     """open_P0 diario = referencia → primer bar intradía normaliza respecto a ese open."""
-    ohlcv = _make_daily_ohlcv(10)
+    ohlcv = _make_ohlcv(10)
     event_ts = ohlcv.index[3]
     events = _make_events_df(ohlcv, [3])
-    intraday = _make_intraday([event_ts])
+    intraday = _make_event_tf_bars([event_ts])
     result = compute_price_action(events, ohlcv, intraday, n_periods=0, event_signs=_signs_for(events, ohlcv, 0))
-    assert result.anchor_mode == "intraday_30min"
+    assert result.anchor_mode == "inside_event"
     ref = ohlcv.iloc[3]["open"]
     first_close_30m = float(
         intraday[intraday.index.normalize().tz_convert("UTC") == event_ts.normalize()
@@ -127,7 +127,7 @@ def test_win_loss_classification_daily():
     (fuente compartida con Future Return Metrics), no un recalculo propio a
     partir de precios — se prueba con un event_signs explicito y deterministico,
     desacoplado de compute_future_return_signs (que se prueba por separado)."""
-    ohlcv = _make_daily_ohlcv(30)
+    ohlcv = _make_ohlcv(30)
     n = 3
     win_indices = [3, 6, 9]
     loss_indices = [12, 15, 18]
@@ -151,11 +151,11 @@ def test_win_loss_classification_daily():
 def test_win_loss_classification_intraday():
     """Modo inside event: bucketizacion win/loss via event_signs explicito,
     desacoplado de la logica de precio (probada aparte en compute_future_return_signs)."""
-    ohlcv = _make_daily_ohlcv(20)
+    ohlcv = _make_ohlcv(20)
     win_idx, loss_idx = 5, 10
     indices = [win_idx, loss_idx]
     events = _make_events_df(ohlcv, indices)
-    intraday = _make_intraday([ohlcv.index[i] for i in indices])
+    intraday = _make_event_tf_bars([ohlcv.index[i] for i in indices])
 
     event_signs = {
         to_utc_ts(ohlcv.index[win_idx]): 0.03,
@@ -170,7 +170,7 @@ def test_win_loss_classification_intraday():
 def test_win_loss_tie_and_none_excluded_but_kept_in_all():
     """Empate (retorno == 0) o event_signs faltante (None) → el evento no entra
     en win_series/loss_series pero sigue contando en n_events_all."""
-    ohlcv = _make_daily_ohlcv(30)
+    ohlcv = _make_ohlcv(30)
     tie_idx, none_idx, win_idx = 3, 6, 9
     events = _make_events_df(ohlcv, [tie_idx, none_idx, win_idx])
 
@@ -193,7 +193,7 @@ def test_win_loss_tie_and_none_excluded_but_kept_in_all():
 @pytest.mark.unit
 def test_insufficient_events_returns_warning():
     """Con < 5 eventos → warning = 'insufficient_events'."""
-    ohlcv = _make_daily_ohlcv(20)
+    ohlcv = _make_ohlcv(20)
     events = _make_events_df(ohlcv, [5])  # solo 1 evento
     result = compute_price_action(events, ohlcv, None, n_periods=3, event_signs={})
     assert result.warning == "insufficient_events"
@@ -202,7 +202,7 @@ def test_insufficient_events_returns_warning():
 @pytest.mark.unit
 def test_omit_event_without_intraday_data():
     """Evento sin barras de 30min → n_events_omitted += 1, no excepción."""
-    ohlcv = _make_daily_ohlcv(10)
+    ohlcv = _make_ohlcv(10)
     events = _make_events_df(ohlcv, [3])
     # Pasar intraday vacío
     result = compute_price_action(events, ohlcv, pd.DataFrame(), n_periods=0, event_signs={})
@@ -233,7 +233,7 @@ def test_band_width_positive():
 @pytest.mark.unit
 def test_include_bands_false():
     """include_bands=False → band_upper y band_lower son None en todas las series."""
-    ohlcv = _make_daily_ohlcv(30)
+    ohlcv = _make_ohlcv(30)
     events = _make_events_df(ohlcv, list(range(2, 20)))
     result = compute_price_action(events, ohlcv, None, n_periods=3, event_signs={}, include_bands=False)
     assert result.series_all.band_upper is None
@@ -243,7 +243,7 @@ def test_include_bands_false():
 @pytest.mark.unit
 def test_daily_x_labels():
     """n_periods=3 → x_labels = ['P1', 'P2', 'P3']."""
-    ohlcv = _make_daily_ohlcv(20)
+    ohlcv = _make_ohlcv(20)
     events = _make_events_df(ohlcv, list(range(2, 12)))
     result = compute_price_action(events, ohlcv, None, n_periods=3, event_signs={})
     assert result.x_labels == ["P1", "P2", "P3"]
@@ -252,7 +252,7 @@ def test_daily_x_labels():
 @pytest.mark.unit
 def test_series_lengths_consistent_daily():
     """Todas las series (all, win, loss) tienen el mismo número de puntos."""
-    ohlcv = _make_daily_ohlcv(30)
+    ohlcv = _make_ohlcv(30)
     events = _make_events_df(ohlcv, list(range(2, 20)))
     result = compute_price_action(events, ohlcv, None, n_periods=4, event_signs=_signs_for(events, ohlcv, 4))
     lens = {
@@ -273,11 +273,11 @@ def test_series_lengths_consistent_daily():
 def test_distribution_stats_daily_x_labels_match_price_action():
     """Mismo events_df/n_periods → x_labels idénticos entre price-action y
     distribution-stats (ambos paneles deben compartir eje X)."""
-    ohlcv = _make_daily_ohlcv(30)
+    ohlcv = _make_ohlcv(30)
     events = _make_events_df(ohlcv, list(range(2, 20)))
     price_action = compute_price_action(events, ohlcv, None, n_periods=4, event_signs={})
     dist = compute_distribution_stats(events, ohlcv, None, n_periods=4)
-    assert dist.anchor_mode == "daily"
+    assert dist.anchor_mode == "holding"
     assert dist.x_labels == price_action.x_labels == ["P1", "P2", "P3", "P4"]
     assert len(dist.rows) == 4
     assert [row.offset for row in dist.rows] == [1, 2, 3, 4]
@@ -287,20 +287,20 @@ def test_distribution_stats_daily_x_labels_match_price_action():
 @pytest.mark.unit
 def test_distribution_stats_intraday_x_labels_match_price_action():
     """Modo inside event: mismo events_df/intraday → mismos x_labels que price-action."""
-    ohlcv = _make_daily_ohlcv(20)
+    ohlcv = _make_ohlcv(20)
     indices = list(range(2, 18))
     events = _make_events_df(ohlcv, indices)
-    intraday = _make_intraday([ohlcv.index[i] for i in indices])
+    intraday = _make_event_tf_bars([ohlcv.index[i] for i in indices])
     price_action = compute_price_action(events, ohlcv, intraday, n_periods=0, event_signs={})
     dist = compute_distribution_stats(events, ohlcv, intraday, n_periods=0)
-    assert dist.anchor_mode == "intraday_30min"
+    assert dist.anchor_mode == "inside_event"
     assert dist.x_labels == price_action.x_labels
 
 
 @pytest.mark.unit
 def test_distribution_stats_row_fields_are_finite():
     """Cada fila debe traer métricas numéricas finitas y una clasificación válida."""
-    ohlcv = _make_daily_ohlcv(40)
+    ohlcv = _make_ohlcv(40)
     events = _make_events_df(ohlcv, list(range(2, 30)))
     dist = compute_distribution_stats(events, ohlcv, None, n_periods=5, tail_q=0.1)
     assert len(dist.rows) == 5
@@ -323,7 +323,7 @@ def test_distribution_stats_low_n_offset_forced_neutral():
     """Offset con n_obs < MIN_EVENTS_PLOT → color_base='blanco', icon='' aunque
     las métricas crudas (ret_mean, ratio_colas, etc.) den señales fuertes —
     evita clasificar con confianza sobre una muestra ruidosa."""
-    ohlcv = _make_daily_ohlcv(60)
+    ohlcv = _make_ohlcv(60)
     # 8 eventos con ventana de 6 sesiones: todas las columnas P1..P6 tienen
     # n_obs=8 (>= MIN_EVENTS_PLOT=5), sirve de control "bien muestreado".
     events = _make_events_df(ohlcv, list(range(2, 10)))
@@ -355,7 +355,7 @@ def test_distribution_stats_low_n_offset_forced_neutral():
 @pytest.mark.unit
 def test_distribution_stats_insufficient_events_warning():
     """Con < MIN_EVENTS_PLOT eventos usados → warning = 'insufficient_events'."""
-    ohlcv = _make_daily_ohlcv(20)
+    ohlcv = _make_ohlcv(20)
     events = _make_events_df(ohlcv, [5])  # solo 1 evento
     dist = compute_distribution_stats(events, ohlcv, None, n_periods=3)
     assert dist.n_events_used < MIN_EVENTS_PLOT
@@ -365,7 +365,7 @@ def test_distribution_stats_insufficient_events_warning():
 @pytest.mark.unit
 def test_distribution_stats_empty_events_no_exception():
     """events_df vacío → filas vacías, sin excepción."""
-    ohlcv = _make_daily_ohlcv(20)
+    ohlcv = _make_ohlcv(20)
     events = _make_events_df(ohlcv, [])
     dist = compute_distribution_stats(events, ohlcv, None, n_periods=3)
     assert dist.rows == []

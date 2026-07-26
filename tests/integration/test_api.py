@@ -184,7 +184,7 @@ async def test_informative_analysis(test_client: AsyncClient):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_price_action_daily(test_client: AsyncClient):
-    """n_periods=5 → anchor_mode='daily', x_labels=['P1','P2','P3','P4','P5']."""
+    """n_periods=5 → anchor_mode='holding', x_labels=['P1','P2','P3','P4','P5']."""
     r = await test_client.post(
         "/api/v1/analysis/price-action",
         json={
@@ -197,7 +197,7 @@ async def test_price_action_daily(test_client: AsyncClient):
     )
     assert r.status_code == 200
     data = r.json()
-    assert data["anchor_mode"] == "daily"
+    assert data["anchor_mode"] == "holding"
     assert data["n_periods"] == 5
     assert data["x_labels"] == ["P1", "P2", "P3", "P4", "P5"]
     assert "series_all" in data
@@ -236,7 +236,7 @@ async def test_price_action_intraday_omits_old_events(test_client: AsyncClient, 
     )
     assert r.status_code == 200
     data = r.json()
-    assert data["anchor_mode"] == "intraday_30min"
+    assert data["anchor_mode"] == "inside_event"
     assert data["n_events_omitted"] > 0
     assert data["warning"] in ("insufficient_events", "some_events_omitted")
 

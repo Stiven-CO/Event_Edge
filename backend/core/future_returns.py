@@ -30,7 +30,7 @@ def compute_future_return_signs(
     """Retorna, keyed por evento (to_utc_ts(row['date'])), el retorno firmado
     por evento, usando la misma referencia de precio en ambos modos:
 
-    - in_event:  P0 open -> close (misma barra del timeframe exterior).
+    - inside_event:  P0 open -> close (misma barra del timeframe exterior).
     - holding:   P1-open -> Pn-close (periodo elegido por el usuario).
 
     None cuando el lookup de la barra correspondiente falla (evento sin
@@ -45,7 +45,7 @@ def compute_future_return_signs(
     df = ohlcv_df.sort_index()
     trading_dates = df.index
 
-    if price_action_mode == "in_event":
+    if price_action_mode == "inside_event":
         for ts in conditioned_df["date"]:
             ts_utc = to_utc_ts(ts)
             loc = trading_dates.get_indexer([ts_utc], method="nearest")[0]

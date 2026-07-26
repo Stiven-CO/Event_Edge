@@ -203,9 +203,9 @@ class AnalysisRequest(BaseModel):
     date_range_end: datetime | None = None
     credentials_account: str | None = None
     # Determina qué representa FutureReturnMetrics: "holding" → retorno posterior
-    # al evento (P1-open→Pn-close); "in_event" → retorno del propio día del
+    # al evento (P1-open→Pn-close); "inside_event" → retorno del propio día del
     # evento (P0 open→close), ya que no existe un "retorno futuro" en ese modo.
-    price_action_mode: Literal["holding", "in_event"] = "holding"
+    price_action_mode: Literal["holding", "inside_event"] = "holding"
 
     @field_validator("symbol")
     @classmethod
@@ -598,9 +598,9 @@ class PriceActionSeries(BaseModel):
 class PriceActionResult(BaseModel):
     """Respuesta para POST /api/v1/analysis/price-action."""
 
-    anchor_mode: Literal["intraday_30min", "daily"]
+    anchor_mode: Literal["inside_event", "holding"]
     n_periods: int
-    x_labels: list[str]           # "09:30"…"16:00" para intraday; "P1"…"Pn" para daily
+    x_labels: list[str]           # "09:30"…"16:00" para intraday; "P1"…"Pn" para holding
     series_all:  PriceActionSeries
     series_win:  PriceActionSeries
     series_loss: PriceActionSeries
@@ -625,7 +625,7 @@ class PriceActionRequest(BaseModel):
     include_earnings_days: bool | None = None
     n_periods: int = Field(default=5, ge=0, le=60)
     include_bands: bool = True
-    price_action_mode: Literal["holding", "in_event"] = "holding"
+    price_action_mode: Literal["holding", "inside_event"] = "holding"
     event_timeframe: str = "30m"
     conditioning: ConditioningParams = Field(default_factory=ConditioningParams)
     date_range_start: datetime | None = None
@@ -678,7 +678,7 @@ class DistributionStatsRow(BaseModel):
 class DistributionStatsResult(BaseModel):
     """Respuesta para POST /api/v1/analysis/distribution-stats."""
 
-    anchor_mode: Literal["intraday_30min", "daily"]
+    anchor_mode: Literal["inside_event", "holding"]
     n_periods: int
     x_labels: list[str]
     rows: list[DistributionStatsRow]
@@ -718,9 +718,9 @@ class SaveEdgeRequest(BaseModel):
     date_range_end: datetime | None = None
     credentials_account: str | None = None
     # Determina qué representa future_return_metrics en el Edge persistido:
-    # "holding" → retorno posterior al evento (P1→Pn); "in_event" → retorno
+    # "holding" → retorno posterior al evento (P1→Pn); "inside_event" → retorno
     # del propio día del evento (P0 open→close).
-    price_action_mode: Literal["holding", "in_event"] = "holding"
+    price_action_mode: Literal["holding", "inside_event"] = "holding"
 
     @field_validator("symbol")
     @classmethod

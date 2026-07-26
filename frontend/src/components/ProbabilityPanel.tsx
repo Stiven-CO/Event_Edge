@@ -7,8 +7,8 @@ import { useEventEdgeStore } from "@/store/eventEdgeStore";
 type FamilyKey = "close_return" | "gap_fill";
 
 // ── Descripciones de cada característica de estudio ──────────────────────────
-function getCloseReturnInfo(mode: "holding" | "in_event") {
-  if (mode === "in_event") {
+function getCloseReturnInfo(mode: "holding" | "inside_event") {
+  if (mode === "inside_event") {
     return {
       label: "Close Return",
       formula: "(close_P0 − open_P0) / open_P0",
@@ -24,8 +24,8 @@ function getCloseReturnInfo(mode: "holding" | "in_event") {
   };
 }
 
-function getGapFillInfo(mode: "holding" | "in_event") {
-  if (mode === "in_event") {
+function getGapFillInfo(mode: "holding" | "inside_event") {
+  if (mode === "inside_event") {
     return {
       label: "Gap Fill",
       formula: 'P(precio toca prev_close dentro de P0 "El evento")',
@@ -42,7 +42,7 @@ function getGapFillInfo(mode: "holding" | "in_event") {
 }
 
 // ── InfoBox colapsable ────────────────────────────────────────────────────────
-function FamilyInfoBox({ family, mode }: { family: FamilyKey; mode: "holding" | "in_event" }) {
+function FamilyInfoBox({ family, mode }: { family: FamilyKey; mode: "holding" | "inside_event" }) {
   const [open, setOpen] = useState(false);
   const info = family === "close_return" ? getCloseReturnInfo(mode) : getGapFillInfo(mode);
 

@@ -72,7 +72,7 @@ interface EventEdgeState {
   model: ModelType;
   nPeriods: number;
   // ── Price Action params ───────────────────────────────────────────────────
-  priceActionMode: "holding" | "in_event";
+  priceActionMode: "holding" | "inside_event";
   priceActionEventTF: string;
   gapThreshold: number;
   includeEarningsDays: boolean | null;
@@ -112,7 +112,7 @@ interface EventEdgeState {
   setEventType: (t: EventType) => void;
   setModel: (m: ModelType) => void;
   setNPeriods: (n: number) => void;
-  setPriceActionMode: (m: "holding" | "in_event") => void;
+  setPriceActionMode: (m: "holding" | "inside_event") => void;
   setPriceActionEventTF: (tf: string) => void;
   setGapThreshold: (t: number) => void;
   setIncludeEarningsDays: (v: boolean | null) => void;

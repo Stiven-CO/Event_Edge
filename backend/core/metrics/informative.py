@@ -87,7 +87,7 @@ def compute_global_metrics(
     return_max    = float(np.max(ret_arr)) if n > 0 else 0.0
 
     # ── C: Volatilidad anualizada ─────────────────────────────────────────────
-    # ajustada segun tiframe (252 sesiones por año para daily, 12 para monthly, etc.)
+    # ajustada segun tiframe (252 sesiones por año para holding, 12 para monthly, etc.)
     annualized_vol = return_std * _mul_volatility_to_annual(timeframe)
 
     # ── C: ATR(14) ────────────────────────────────────────────────────────────

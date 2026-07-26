@@ -273,7 +273,7 @@ def build_future_return_metrics(
     (P1-open → Pn-close, al período elegido por el usuario) — hay un "futuro"
     real que medir.
 
-    Modo `in_event`: no existe un retorno posterior con sentido (el análisis
+    Modo `inside_event`: no existe un retorno posterior con sentido (el análisis
     vive dentro del propio día del evento) — las estadísticas extendidas y las
     muestras crudas se calculan sobre el retorno del propio día del evento
     (P0 open → close), misma referencia que

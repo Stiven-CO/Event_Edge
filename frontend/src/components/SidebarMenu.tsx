@@ -591,7 +591,7 @@ export function SidebarMenu() {
           </p>
 
           <div className="flex gap-1">
-            {(["holding", "in_event"] as const).map((m) => (
+            {(["holding", "inside_event"] as const).map((m) => (
               <button
                 key={m}
                 type="button"
