@@ -641,7 +641,7 @@ export function SidebarMenu() {
 
           <div>
             <FieldLabel>Bins de retorno</FieldLabel>
-            <p className="mb-1 text-xs text-ink-muted">Ej: -0.05, -0.01, 0.01, 0.05</p>
+            <p className="mb-1 text-xs text-ink-muted">Ej: -0.05, -0.02, 0, 0.02, 0.05</p>
             <textarea
               className="input min-h-[72px] font-mono text-xs"
               value={binsDraft}
@@ -659,7 +659,7 @@ export function SidebarMenu() {
                 Aplicar bins
               </button>
               <button type="button" className="btn-ghost"
-                onClick={() => { setBinsDraft("-0.05, -0.01, 0.01, 0.05"); setBins([-0.05, -0.01, 0.01, 0.05]); }}>
+                onClick={() => { setBinsDraft("-0.05, -0.02, 0, 0.02, 0.05"); setBins([-0.05, -0.02, 0, 0.02, 0.05]); }}>
                 Reset
               </button>
             </div>

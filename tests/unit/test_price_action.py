@@ -307,7 +307,7 @@ def test_distribution_stats_row_fields_are_finite():
     for row in dist.rows:
         for field in ("ret_mean", "ret_p25", "ret_p75", "cvar", "r_cvar",
                        "asimetria", "curtosis", "rev_alcista_mean", "rev_alcista_p75",
-                       "rev_bajista_mean", "rev_bajista_p25", "ratio_colas"):
+                       "rev_bajista_mean", "rev_bajista_p75", "ratio_colas"):
             assert math.isfinite(getattr(row, field)), f"{field} no finito en offset {row.offset}"
         assert row.color_base in ("azul", "amarillo", "coral", "blanco")
         assert row.icon in ("", "⚡", "⚠️", "🔄")

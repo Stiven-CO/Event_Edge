@@ -181,7 +181,7 @@ class ConditioningParams(BaseModel):
 
 _SYMBOL_RE = re.compile(r"^[A-Z]{1,5}$")
 
-_DEFAULT_BINS: list[float] = [-0.05, -0.01, 0.01, 0.05]
+_DEFAULT_BINS: list[float] = [-0.05, -0.02, 0, 0.02, 0.05]
 
 
 class AnalysisRequest(BaseModel):
@@ -664,7 +664,7 @@ class DistributionStatsRow(BaseModel):
     rev_alcista_mean: float
     rev_alcista_p75: float
     rev_bajista_mean: float
-    rev_bajista_p25: float
+    rev_bajista_p75: float
 
     ratio_colas: float  # |r_cvar| / |cvar|
 

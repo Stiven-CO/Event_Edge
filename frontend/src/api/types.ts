@@ -343,7 +343,7 @@ export interface DistributionStatsRow {
   rev_alcista_mean: number;
   rev_alcista_p75: number;
   rev_bajista_mean: number;
-  rev_bajista_p25: number;
+  rev_bajista_p75: number;
 
   ratio_colas: number;
 

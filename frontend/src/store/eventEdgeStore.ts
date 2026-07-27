@@ -162,7 +162,7 @@ export const useEventEdgeStore = create<EventEdgeState>((set, get) => ({
   priceActionEventTF: "30m",
   gapThreshold: 1.0,
   includeEarningsDays: null,
-  bins: [-0.05, -0.01, 0.01, 0.05],
+  bins: [-0.05, -0.02, 0, 0.02, 0.05],
   conditioning: defaultConditioning,
   dateStart: "",
   dateEnd: "",

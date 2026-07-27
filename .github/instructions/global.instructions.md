@@ -55,14 +55,14 @@ data/ → core/ → api/
 
 - `EventRecord`: unidad mínima de evento con campos `date`, `event_type`, `gap_pct`, `eps_surprise_pct`, `eps_actual`, `eps_estimate`, `revenue_surprise_pct`
 - `ConditioningParams`: filtros opcionales; `None` = sin condicionamiento
-- `ScenarioBins`: lista de floats configurada por el usuario (ej. `[-0.05, -0.01, 0.01, 0.05]`), nunca hardcodeada en el backend
+- `ScenarioBins`: lista de floats configurada por el usuario (ej. `[-0.05, -0.02, 0, 0.02, 0.05]`), nunca hardcodeada en el backend
 - `ProbabilisticResult`: siempre incluye `n_samples_used` y `n_total_events`
 
 ## Bins de escenarios
 
 - Los bins son configurables por el usuario desde la UI
 - El backend acepta `bins: list[float]` — nunca usa bins fijos en lógica de negocio
-- Default sugerido desde frontend: `[-0.05, -0.01, 0.01, 0.05]`
+- Default sugerido desde frontend: `[-0.05, -0.02, 0, 0.02, 0.05]`
 - Si `n_samples_used < 5` la respuesta incluye `warning: "insufficient_samples"`
 
 ## Frontend

@@ -28,7 +28,7 @@ const ROW_DEFS: RowDef[] = [
   { key: "rev_alcista_mean", label: "Reversión alcista (media)", format: fmtPct },
   { key: "rev_alcista_p75", label: "Reversión alcista (P75)", format: fmtPct },
   { key: "rev_bajista_mean", label: "Reversión bajista (media)", format: fmtPct },
-  { key: "rev_bajista_p25", label: "Reversión bajista (P25)", format: fmtPct },
+  { key: "rev_bajista_p75", label: "Reversión bajista (P75)", format: fmtPct },
 ];
 
 // Mapea la clasificación del backend a los design tokens de Tailwind del

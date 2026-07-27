@@ -12,7 +12,7 @@ from backend.core.statistical_models import (
     KDEModel,
 )
 
-BINS = [-0.05, -0.01, 0.01, 0.05]
+BINS = [-0.05, -0.02, 0, 0.02, 0.05]
 ALL_MODELS = [FrequentistModel, BootstrapModel, KDEModel, BayesianModel]
 
 

@@ -573,7 +573,7 @@ def _aggregate_distribution_rows(
         rev_alcista_mean=("reversion_alcista", "mean"),
         rev_alcista_p75=("reversion_alcista", _q(0.75)),
         rev_bajista_mean=("reversion_bajista", "mean"),
-        rev_bajista_p25=("reversion_bajista", _q(0.25)),
+        rev_bajista_p75=("reversion_bajista", _q(0.75)),
     )
     cvar_safe = np.where(stats["cvar"] == 0, 1e-9, stats["cvar"])
     stats["ratio_colas"] = np.abs(stats["r_cvar"]) / np.abs(cvar_safe)
@@ -582,7 +582,7 @@ def _aggregate_distribution_rows(
     # para que un par de columnas ruidosas (n_obs bajo) no distorsionen el
     # corte ⚡/⚠️ del resto de la tabla.
     well_sampled = stats[stats["n_obs"] >= MIN_EVENTS_PLOT]
-    mag_bajista = (well_sampled["rev_bajista_p25"] if not well_sampled.empty else stats["rev_bajista_p25"]).abs()
+    mag_bajista = (well_sampled["rev_bajista_p75"] if not well_sampled.empty else stats["rev_bajista_p75"]).abs()
     mag_alcista = (well_sampled["rev_alcista_p75"] if not well_sampled.empty else stats["rev_alcista_p75"]).abs()
     umbral_limpio_bajista = mag_bajista.quantile(clean_q)
     umbral_dolor_bajista = mag_bajista.quantile(pain_q)
@@ -597,7 +597,7 @@ def _aggregate_distribution_rows(
         ret_p75 = float(stats.loc[offset, "ret_p75"])
         ratio = float(stats.loc[offset, "ratio_colas"])
         asim = float(stats.loc[offset, "asimetria"])
-        rev_bajista_p25 = float(stats.loc[offset, "rev_bajista_p25"])
+        rev_bajista_p75 = float(stats.loc[offset, "rev_bajista_p75"])
         rev_alcista_p75 = float(stats.loc[offset, "rev_alcista_p75"])
 
         # Con menos de MIN_EVENTS_PLOT observaciones, percentiles/CVaR/skew son
@@ -608,7 +608,7 @@ def _aggregate_distribution_rows(
         else:
             color_base = _classify_color(ret_mean, ret_p25, ret_p75, ratio, asim)
             icon = _classify_icon(
-                color_base, rev_bajista_p25, rev_alcista_p75,
+                color_base, rev_bajista_p75, rev_alcista_p75,
                 umbral_limpio_bajista, umbral_dolor_bajista,
                 umbral_limpio_alcista, umbral_dolor_alcista,
             )
@@ -628,7 +628,7 @@ def _aggregate_distribution_rows(
             rev_alcista_mean=float(stats.loc[offset, "rev_alcista_mean"]),
             rev_alcista_p75=rev_alcista_p75,
             rev_bajista_mean=float(stats.loc[offset, "rev_bajista_mean"]),
-            rev_bajista_p25=rev_bajista_p25,
+            rev_bajista_p75=rev_bajista_p75,
             ratio_colas=ratio,
             color_base=color_base,
             icon=icon,
@@ -651,7 +651,7 @@ def _classify_color(
 
 def _classify_icon(
     color_base: str,
-    rev_bajista_p25: float,
+    rev_bajista_p75: float,
     rev_alcista_p75: float,
     umbral_limpio_bajista: float,
     umbral_dolor_bajista: float,
@@ -661,9 +661,9 @@ def _classify_icon(
     """Ícono de ejecución (⚡ limpio / ⚠️ doloroso / 🔄 choppy) según la magnitud
     de la reversión relevante al color base, contra los umbrales dinámicos."""
     if color_base == "azul":
-        if abs(rev_bajista_p25) <= umbral_limpio_bajista:
+        if abs(rev_bajista_p75) <= umbral_limpio_bajista:
             return "⚡"
-        if abs(rev_bajista_p25) >= umbral_dolor_bajista:
+        if abs(rev_bajista_p75) >= umbral_dolor_bajista:
             return "⚠️"
     elif color_base == "amarillo":
         if abs(rev_alcista_p75) <= umbral_limpio_alcista:
@@ -671,6 +671,6 @@ def _classify_icon(
         if abs(rev_alcista_p75) >= umbral_dolor_alcista:
             return "⚠️"
     elif color_base == "blanco":
-        if abs(rev_alcista_p75) >= umbral_dolor_alcista and abs(rev_bajista_p25) >= umbral_dolor_bajista:
+        if abs(rev_alcista_p75) >= umbral_dolor_alcista and abs(rev_bajista_p75) >= umbral_dolor_bajista:
             return "🔄"
     return ""
